@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 历史备份与实验版本（不参与运行）
+*.bak
+*.before-simplify.bak
+*.fixed
+*.lodbak
+*.lodv2bak
+*.midbak
+
+# 运行时日志与临时文件
+*.log
+*.err
+*.tmp
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

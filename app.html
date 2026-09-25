@@ -1,0 +1,1980 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>可转债成交额监控 · Top20</title>
+<style>
+  :root{
+    --bg:#f2f5fa; --panel:#ffffff;
+    --text:#0f172a; --text-2:#64748b; --text-3:#9aa4b2;
+    --border:#e6eaf1; --border-2:#eff2f7;
+    --up:#e5342b; --down:#0a9e5c; --flat:#64748b;
+    --accent:#2f5fe0; --accent-soft:#eef3ff;
+    --up-bg:#fdecea; --down-bg:#e8f7f0;
+    --radius:14px;
+    --shadow-sm:0 1px 2px rgba(15,23,42,.05);
+    --shadow:0 1px 3px rgba(15,23,42,.05), 0 10px 26px -14px rgba(15,23,42,.18);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(1100px 420px at 50% -150px, #e8eeff 0%, rgba(232,238,255,0) 72%),
+      var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    font-size:14px;
+    padding:0 22px 44px;
+  }
+  .wrap{max-width:1560px;margin:0 auto}
+
+  /* ---------- 顶栏 ---------- */
+  header{
+    position:sticky;top:0;z-index:30;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+    padding:16px 0 12px;margin-bottom:14px;
+    background:linear-gradient(180deg,rgba(242,245,250,.97) 62%,rgba(242,245,250,.74));
+    backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border);
+  }
+  .brand{display:flex;align-items:center;gap:12px;min-width:0}
+  .mark{
+    width:38px;height:38px;flex:0 0 38px;border-radius:11px;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,#3b6df0,#7a3ff0);
+    color:#fff;font-weight:800;font-size:17px;
+    box-shadow:0 6px 16px -6px rgba(59,109,240,.65);
+  }
+  h1{font-size:19px;font-weight:750;letter-spacing:.2px;line-height:1.2}
+  .sub{font-size:12px;color:var(--text-2);margin-top:4px}
+  .chips{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .chip{
+    display:inline-flex;align-items:center;gap:7px;
+    background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    padding:7px 12px;font-size:12.5px;color:var(--text-2);box-shadow:var(--shadow-sm);
+  }
+  .chip b{color:var(--text);font-weight:650;font-variant-numeric:tabular-nums}
+  .rel{font-size:11.5px;color:var(--text-3)}
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:650}
+  .pill.live{background:var(--down-bg);color:var(--down)}
+  .pill.live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--down);animation:blink 1.4s infinite}
+  .pill.noon{background:#fdf3e3;color:#b45309}
+  .pill.closed{background:#eef1f5;color:var(--text-2)}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+
+  select,input,button{font-family:inherit}
+  #refreshSel,.btn{
+    border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--text);
+    font-size:12.5px;padding:6px 10px;outline:none;cursor:pointer;font-weight:600;transition:all .15s;
+  }
+  #refreshSel:hover,.btn:hover{border-color:#cbd5e1;background:#fafbff}
+  .btn.primary{color:var(--accent);border-color:#cfdcff;background:var(--accent-soft)}
+  .btn.primary:hover{background:#e3ebff}
+  .btn:active{transform:scale(.96)}
+
+  /* ---------- 市场概览 ---------- */
+  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:14px}
+  .stat{
+    background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+    padding:12px 14px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:6px;min-width:0;
+  }
+  .stat .k{font-size:11.5px;color:var(--text-3);letter-spacing:.3px}
+  .stat .v{font-size:20px;font-weight:750;font-variant-numeric:tabular-nums;line-height:1.1}
+  .stat .v.up{color:var(--up)} .stat .v.down{color:var(--down)} .stat .v.flat{color:var(--text)}
+  .breadth{display:flex;height:9px;border-radius:999px;overflow:hidden;background:#eef1f5;margin-top:3px}
+  .breadth i{display:block;height:100%;transition:width .5s ease}
+  .breadth .bu{background:linear-gradient(90deg,#f26a62,#e5342b)}
+  .breadth .bf{background:#cfd6df}
+  .breadth .bd{background:linear-gradient(90deg,#2fbf80,#0a9e5c)}
+  .breadth-legend{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-3)}
+
+  /* ---------- 卡片 ---------- */
+  .main{display:flex;gap:14px;align-items:stretch}
+  .card{
+    background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+    box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;min-width:0;
+  }
+  .card-table{flex:0 0 42%}
+  .watch-col{flex:0 0 26%;display:flex;flex-direction:column;gap:14px;min-width:0}
+  .card-watch,.card-watch60{flex:1 1 0;min-height:0}
+  .card-chart{flex:1}
+  .card-hd{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:12px 14px;border-bottom:1px solid var(--border-2);
+  }
+  .card-hd .t{font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:6px}
+  .card-hd .t .n{color:var(--accent);font-weight:750}
+
+  /* ---------- 搜索条 ---------- */
+  .toolbar{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border-2)}
+  .toolbar input[type=text]{
+    flex:1;min-width:120px;max-width:340px;border:1px solid var(--border);border-radius:9px;
+    padding:7px 12px;font-size:13px;color:var(--text);outline:none;background:#fbfcfe;transition:all .15s;
+  }
+  .toolbar input[type=text]:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px rgba(47,95,224,.10)}
+  .toolbar .cnt{font-size:12px;color:var(--text-3);white-space:nowrap;margin-left:auto}
+
+  /* ---------- 表格 ---------- */
+  .tbl-scroll{overflow-y:auto;max-height:640px;flex:1}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  thead th{
+    position:sticky;top:0;z-index:2;background:#fbfcfe;color:var(--text-3);
+    font-weight:650;font-size:11.5px;padding:10px 8px;text-align:right;white-space:nowrap;
+    border-bottom:1px solid var(--border);cursor:pointer;user-select:none;letter-spacing:.3px;
+  }
+  thead th:hover{color:var(--accent)}
+  thead th.sorted{color:var(--accent)}
+  thead th.sorted::after{content:attr(data-arrow);margin-left:3px;font-size:9px}
+  thead th.nosort{cursor:default}
+  thead th.nosort:hover{color:var(--text-3)}
+  thead th:first-child,tbody td:first-child{text-align:center}
+  thead th:nth-child(2),thead th:nth-child(3),
+  tbody td:nth-child(2),tbody td:nth-child(3){text-align:left}
+  tbody td{
+    padding:9px 8px;text-align:right;white-space:nowrap;
+    border-bottom:1px solid var(--border-2);font-variant-numeric:tabular-nums;
+  }
+  tbody tr{transition:background .12s}
+  tbody tr:hover{background:#f8faff}
+  tbody tr.sel{background:#eff4ff;box-shadow:inset 3px 0 0 var(--accent)}
+  tbody tr.sel .kbtn{background:var(--accent);color:#fff;border-color:var(--accent)}
+  tbody tr:last-child td{border-bottom:none}
+  .loading{text-align:center;color:var(--text-3);padding:44px 0}
+  .rank{display:inline-block;width:22px;height:22px;line-height:22px;border-radius:7px;font-size:12px;font-weight:750;color:var(--text-3)}
+  .rank.top{color:#fff;box-shadow:0 3px 8px -3px rgba(0,0,0,.32)}
+  .rank.r1{background:linear-gradient(135deg,#f4595a,#d92b23)}
+  .rank.r2{background:linear-gradient(135deg,#f7b23b,#e8890b)}
+  .rank.r3{background:linear-gradient(135deg,#3fc79a,#0f9d63)}
+  .code{font-weight:700;color:var(--accent);cursor:pointer;letter-spacing:.2px}
+  .name{color:var(--text);font-weight:550}
+  .stock{font-size:10.5px;color:var(--text-3);margin-left:5px}
+  .num.up{color:var(--up)} .num.down{color:var(--down)} .num.flat{color:var(--flat)}
+  .chg-badge{display:inline-block;min-width:70px;padding:3px 8px;border-radius:8px;font-weight:700;text-align:center}
+  .chg-badge.up{background:var(--up-bg);color:var(--up)}
+  .chg-badge.down{background:var(--down-bg);color:var(--down)}
+  .chg-badge.flat{background:#eef1f5;color:var(--flat)}
+  td.amount{
+    font-weight:750;
+    background-repeat:no-repeat;background-position:right center;
+    background-size:calc(var(--p,0) * 1%) 60%;
+    background-image:linear-gradient(90deg,transparent,var(--bar,rgba(100,116,139,.18)));
+    transition:background-size .45s ease;
+  }
+  td.amount.up{color:var(--up)} td.amount.down{color:var(--down)} td.amount.flat{color:var(--text)}
+
+  /* ---------- 中轨标记 / 闪烁 ---------- */
+  .mid-badge{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:750;vertical-align:middle;white-space:nowrap}
+  .mid-badge.live{background:#f59e0b;color:#fff;animation:midPulse 1.7s ease-out infinite}
+  .mid-badge.past{background:#fdf3e3;color:#b45309}
+  .rd-flag{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:750;vertical-align:middle;white-space:nowrap;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe}
+    /* 进出流水：独立成框（通栏，放在三列下方），不跟池子列表抢空间 */
+  .card-feed{margin-top:14px}
+  .card-feed .feed-list{
+    max-height:180px;overflow-y:auto;padding:11px 14px;
+    display:flex;flex-direction:column;gap:5px;
+  }
+  .feed-item{font-size:12px;line-height:1.6;color:var(--text-2);font-variant-numeric:tabular-nums;
+    padding-left:10px;position:relative;word-break:break-all}
+  .feed-item::before{content:'';position:absolute;left:0;top:8px;width:4px;height:4px;border-radius:50%;background:var(--text-3)}
+  .feed-item.fi-in::before{background:var(--accent)}
+  .feed-item b{color:var(--text-3);font-weight:600;margin-right:6px}
+  .feed-item i{font-style:normal;font-weight:700;margin:0 6px;color:var(--text-3)}
+  .feed-item.fi-in i{color:var(--accent)}
+  .feed-item .fw{color:var(--text-3)}
+  .feed-empty{font-size:12px;color:var(--text-3);padding:2px 0}
+  @keyframes midPulse{0%{box-shadow:0 0 0 0 rgba(245,158,11,.5)}70%{box-shadow:0 0 0 7px rgba(245,158,11,0)}100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}}
+  @keyframes flashUp{from{background:rgba(229,52,43,.18)}to{background:transparent}}
+  @keyframes flashDown{from{background:rgba(10,158,92,.18)}to{background:transparent}}
+  td.flash-up{animation:flashUp .9s ease-out}
+  td.flash-down{animation:flashDown .9s ease-out}
+
+  /* ---------- 按钮 ---------- */
+  .kbtn{
+    border:1px solid var(--border);background:#fff;color:var(--accent);
+    font-size:11px;font-weight:700;padding:3px 10px;border-radius:8px;cursor:pointer;transition:all .15s;
+  }
+  .kbtn:hover{background:var(--accent-soft);border-color:#cfdcff}
+  .kbtn:active{transform:scale(.94)}
+
+  /* ---------- 自选 ---------- */
+  .watch-auto{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border-2);background:#fbfcfe;flex-wrap:wrap}
+  .auto-wrap{font-size:12px;color:var(--text-2);display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
+  .auto-wrap input{accent-color:var(--accent);width:14px;height:14px}
+  .auto-info{font-size:11px;color:var(--text-3);margin-left:auto}
+  .watch-list{overflow-y:auto;max-height:640px;flex:1;padding:9px}
+  .watch-col .watch-list{max-height:none;min-height:110px}
+  .watch-empty{padding:46px 14px;text-align:center;color:var(--text-3);font-size:12.5px;line-height:1.9}
+  .watch-item{position:relative;padding:12px 34px 12px 14px;border-radius:10px;cursor:pointer;border:1px solid transparent;transition:all .12s;margin-bottom:7px}
+  .watch-item:hover{background:#f7f9ff;border-color:var(--border)}
+  .watch-item.sel{background:#eff4ff;border-color:#cfdcff}
+  .watch-item.mid-live{background:linear-gradient(90deg,#fff8ec,#fffdfa);box-shadow:inset 3px 0 0 #f59e0b}
+  .watch-item.mid-live:hover{background:#fdf3e3}
+  .wi-name{font-size:13px;font-weight:650;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .wi-name .code{font-weight:500;color:var(--text-3);font-size:11px}
+  .wi-row{display:flex;align-items:center;gap:8px;margin-top:5px}
+  .wi-row .strong-tag{font-size:11px;font-weight:500;color:#a35b00;background:#fff4e0;
+    border-radius:6px;padding:1px 6px;white-space:nowrap}
+  .wi-row .strong-tag:empty{display:none}
+  .watch-rm{
+    position:absolute;right:8px;top:9px;width:18px;height:18px;line-height:16px;text-align:center;
+    border:none;background:#eef1f5;color:var(--text-2);border-radius:6px;font-size:13px;cursor:pointer;
+    padding:0;opacity:0;transition:all .15s;
+  }
+  .watch-item:hover .watch-rm{opacity:1}
+  .watch-rm:hover{background:var(--up-bg);color:var(--up)}
+  .wchk{width:15px;height:15px;cursor:pointer;accent-color:var(--accent)}
+  #selAll{width:14px;height:14px;cursor:pointer;accent-color:var(--accent)}
+
+  /* ---------- 图表 ---------- */
+  .chart-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:13px 16px 0}
+  .chart-title{font-size:14px;font-weight:750}
+  .chart-title .code{color:var(--accent);font-size:12px;margin-left:6px;font-weight:600}
+  .chart-title .tag{font-size:11px;color:var(--text-3);font-weight:500;margin-left:8px}
+  .chart-meta{font-size:12px;color:var(--text-2)}
+  .chart-hd-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .tf-seg{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:#fff}
+  .tf-btn{border:0;background:#fff;color:var(--text-2);font-family:inherit;font-size:12px;font-weight:600;padding:5px 11px;cursor:pointer;transition:all .15s}
+  .tf-btn+.tf-btn{border-left:1px solid var(--border)}
+  .tf-btn:hover{background:#fafbff}
+  .tf-btn.on{background:var(--accent);color:#fff}
+  #chart{width:100%;height:452px}
+  .chart-empty{height:452px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-3);font-size:13px;gap:10px}
+  .chart-empty .big{font-size:15px;color:var(--text-2);font-weight:650}
+
+  footer{margin-top:16px;font-size:12px;color:var(--text-3);text-align:center;line-height:1.9}
+  .err{color:var(--up)}
+  .spin{display:inline-block;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#cfd6df;border-radius:6px;border:2px solid #fff}
+  ::-webkit-scrollbar-thumb:hover{background:#b9c1cc}
+  ::-webkit-scrollbar-track{background:transparent}
+
+  @media (max-width:1240px){
+    .main{flex-wrap:wrap}
+    .card-table{flex:1 1 100%}
+    .watch-col{flex:1 1 100%;flex-direction:row}
+    .card-watch,.card-watch60{flex:1 1 50%;min-height:240px}
+    .card-chart{flex:1 1 100%}
+  }
+  @media (max-width:900px){
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .watch-col{flex-wrap:wrap}
+    .card-watch,.card-watch60{flex:1 1 100%;min-height:220px}
+    .card-chart{flex:1 1 100%}
+    .tbl-scroll{max-height:460px}
+    .watch-list{max-height:300px}
+  }
+  @media (max-width:720px){
+    body{padding:0 10px 30px}
+    table{font-size:12px}
+    .hide-sm{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="mark">债</div>
+      <div>
+        <h1>可转债监控</h1>
+        <div class="sub">全市场存续可转债 · 成交额 Top20 · 5分钟K线 + 布林线(20,2)</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">市场状态 <b id="market" class="pill closed">加载中</b></span>
+      <span class="chip">存续债 <b id="total">--</b> 只</span>
+      <span class="chip">更新 <b id="ts">--</b><span id="tsRel" class="rel"></span></span>
+      <span class="chip">刷新
+        <select id="refreshSel" title="选择自动刷新间隔">
+          <option value="3">3 秒</option>
+          <option value="5">5 秒</option>
+          <option value="10" selected>10 秒</option>
+          <option value="15">15 秒</option>
+          <option value="30">30 秒</option>
+          <option value="60">60 秒</option>
+          <option value="0">手动</option>
+        </select>
+      </span>
+      <button id="manualBtn" class="btn primary" title="立即刷新一次">↻ 立即刷新</button>
+      <span id="hint" class="rel"></span>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><div class="k">上涨家数</div><div class="v up" id="upCnt">--</div></div>
+    <div class="stat"><div class="k">下跌家数</div><div class="v down" id="downCnt">--</div></div>
+    <div class="stat"><div class="k">总成交额</div><div class="v" id="sumAmt">--</div></div>
+    <div class="stat"><div class="k">平均涨跌</div><div class="v" id="avgPct">--</div></div>
+    <div class="stat">
+      <div class="k">涨跌分布</div>
+      <div class="breadth"><i class="bu" id="bUp"></i><i class="bf" id="bFlat"></i><i class="bd" id="bDown"></i></div>
+      <div class="breadth-legend"><span>涨</span><span>平</span><span>跌</span></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="card card-table">
+      <div class="toolbar">
+        <input id="search" type="text" placeholder="搜索代码 / 名称 / 正股代码…" autocomplete="off">
+        <span class="cnt" id="cnt">--</span>
+      </div>
+      <div class="tbl-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th class="nosort" style="width:34px"><input type="checkbox" id="selAll" title="全选/取消当前可见行"></th>
+              <th class="nosort">#</th>
+              <th data-sort="name" title="点击排序">名称</th>
+              <th data-sort="price" title="点击排序">现价</th>
+              <th data-sort="change_pct" title="点击排序">涨跌幅</th>
+              <th data-sort="amount_wan" title="点击排序" class="sorted" data-arrow="▼">成交额</th>
+              <th data-sort="prem" title="转股溢价率 = 转债价 / 转股价值 − 1，点击排序">溢价率</th>
+              <th data-sort="volume" title="点击排序">成交量</th>
+              <th class="hide-sm nosort">最高</th>
+              <th class="hide-sm nosort">最低</th>
+              <th class="nosort">K线</th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="11" class="loading">数据加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="watch-col">
+    <div class="card card-watch">
+      <div class="card-hd">
+        <div class="t">5下跌 <span class="n" id="watchCnt">0</span></div>
+        <button id="watchClear" class="kbtn" title="清空自选">清空</button>
+      </div>
+      <div class="watch-auto">
+        <label class="auto-wrap" title="全部只按「已收盘」的 5 分钟 K 线判断，正在走的那根不参与（每 10 秒复核，每 5 分钟一轮选股；收盘后自动暂停扫描）。入池：成交额前 20 里，5 分钟 K 线一路不出现上涨（走平不算中断），这段里只要有 2 根的单根跌幅超过 0.25%；涨破出局：入池后任一根已收盘 K 线收 > 前一根收；破位出局：入池后（且 10:15 后）任一根已收盘的「下跌」K 线最低价跌破【入池时的日内低点】（收盘价不必也在新低）；中轨打标：已收盘 K 线下跌且触及 5 分钟布林中轨；掉出成交额前 20 也剔除。">
+          <input type="checkbox" id="autoWatch" checked> 自动监控
+        </label>
+        <button id="autoScan" class="kbtn" title="立即扫描一次">立即扫描</button>
+        <span id="autoInfo" class="auto-info">未扫描</span>
+      </div>
+      <div class="watch-list" id="watchList"></div>
+    </div>
+
+      <div class="card card-watch60">
+        <div class="card-hd">
+          <div class="t">60下跌 <span class="n" id="w60Cnt">0</span></div>
+          <button id="w60Clear" class="kbtn" title="清空">清空</button>
+        </div>
+        <div class="watch-auto">
+          <button id="w60Scan" class="kbtn" title="立即复核一次">立即复核</button>
+          <span class="auto-info" id="w60Info">前20 · 60分钟跌超1.9% · 每分钟</span>
+        </div>
+        <div class="watch-list" id="watch60List"></div>
+      </div>
+    </div>
+
+    <div class="card card-chart">
+      <div class="chart-hd">
+        <div class="chart-title" id="chartTitle">5分钟K线 · 布林线</div>
+        <div class="chart-hd-right">
+          <span class="tf-seg" id="tfSeg" title="切换 K 线周期（点左侧列表会自动切换）">
+            <button type="button" class="tf-btn" data-tf="5m">5分钟</button>
+            <button type="button" class="tf-btn" data-tf="60m">60分钟</button>
+          </span>
+          <div class="chart-meta" id="chartMeta">点击左侧表格中的「K线」按钮查看</div>
+        </div>
+      </div>
+      <div id="chartWrap">
+        <div class="chart-empty" id="chartEmpty">
+          <div class="big">📈 点击表格行或「K线」按钮</div>
+          <div>查看该转债的 K 线 + 标准布林线(20, 2) · 可切 5 / 60 分钟</div>
+        </div>
+        <div id="chart" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-feed">
+    <div class="card-hd">
+      <div class="t">5下跌进出流水 <span class="n" id="feedCnt">0</span></div>
+      <button id="feedClear" class="kbtn" title="清空流水">清空</button>
+    </div>
+    <div class="feed-list" id="feedList"></div>
+  </div>
+
+  <footer>
+    数据来源：东方财富公开接口（存续清单）+ 腾讯免费实时行情 · 5分钟K线（腾讯，东财备用）。仅供研究参考，不构成投资建议，市场有风险，投资需谨慎。<br>
+    点击表头可按代码/名称/现价/涨跌幅/成交额/成交量排序；搜索框可全市场检索；刷新间隔可设置（默认 10 秒）并自动记忆。<br>
+    <b>两个池都只收「成交额前 20」里的债：一旦掉出前 20，立即剔除。</b><br>
+    <b>已公布强赎的债不进这两个池</b>（已在池内的会被移出；名单来自东财、每 30 分钟刷新；全市场明细表中以「强赎」小标提示）。<br>
+    <b>「5下跌」</b>（每 10 秒扫描：入池与剔除同一节奏，<b>只认已收盘</b>的 K 线；<b>收盘后自动暂停扫描</b>，点「立即扫描」可手动跑一次）：<b>一路不出现上涨</b>（走平不算中断）且这段里<b>有 2 根跌幅超过 0.25%</b> 即入池（<b>列表按这个根数降序，越多越靠前</b>）；池内出现任一根已收盘 K 线收 &gt; 前一根收、或<b>入池之后</b>（且 10:15 后）<b>「下跌」的那根最低价跌破入池时的日内低点</b>（收盘价不必也在新低），即剔除；下跌触及 <b>5 分钟</b>布林中轨以橙色「⚡5分中轨」标记。<br>
+    <b>「60下跌」</b>（每 1 分钟复核，<b>不等收盘</b>；<b>收盘后自动暂停复核</b>）：最新一根 60 分钟 K 线跌超 1.9%、且当天<b>没碰到过、也没跌到 <b>60 分钟</b>布林中轨下方</b>、且<b>当天除第一根外的「下跌」K 线没有触及当天最高价</b>的债才留在池内；跌幅收窄到 1.9% 以内、当天碰到/跌破 60 分钟布林中轨、或有下跌 K 线触及当天最高价，立即剔除。<br>
+    <b>注意</b>：两个池说的「中轨」<b>不是同一条线</b>——分别是 5 分钟与 60 分钟的布林中轨。点「5下跌」列表自动看 5 分钟 K 线，点「60下跌」列表自动看 60 分钟 K 线，也可用图表右上角手动切换。
+  </footer>
+</div>
+
+<script src="/vendor/echarts.min.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+// ---- 全局错误可见化：任何 JS 异常都显示出来，避免静默卡在「数据加载中」----
+window.addEventListener('error', function (ev) {
+  var h = document.getElementById('hint');
+  if (h) h.innerHTML = '<span class="err">页面脚本错误：' +
+    String(ev.message || ev.error || '未知') + '</span>';
+  var tb = document.getElementById('tbody');
+  if (tb && /数据加载中/.test(tb.textContent)) {
+    tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#e0342e;padding:32px 0">'
+      + '页面脚本错误，数据无法加载：' + String(ev.message || '未知') + '</td></tr>';
+  }
+});
+window.addEventListener('unhandledrejection', function (ev) {
+  var h = document.getElementById('hint');
+  if (h) h.innerHTML = '<span class="err">异步错误：' +
+    String((ev.reason && ev.reason.message) || ev.reason || '未知') + '</span>';
+});
+
+// ==================== 常量与本地存储 ====================
+const LS_KEY = 'cb_refresh_sec_v2';   // 换键：让浏览器里记着的旧间隔失效，首屏回到默认
+const DEFAULT_REFRESH_SEC = 10;       // 默认刷新间隔（秒）——唯一来源
+const LS_CUR = 'cb_cur_code';
+const LS_WATCH = 'cb_watch';
+const REFRESH_OPTS = [0, 3, 5, 10, 15, 30, 60];
+
+let watchSet = new Set(JSON.parse(localStorage.getItem(LS_WATCH) || '[]'));
+let watchStrong = new Map();      // code -> 这段连跌里「跌超 0.25%」的根数（列表按它降序排）
+// 每只自选债的「入选取样点」：只从该 K 线之后开始判定是否涨过
+const LS_WATCH_ENTRY = 'cb_watch_entry';
+let watchEntry = {};
+try { watchEntry = JSON.parse(localStorage.getItem(LS_WATCH_ENTRY) || '{}') || {}; } catch (e) { watchEntry = {}; }
+function persistWatch() {
+  const clean = {};
+  watchSet.forEach(c => { if (watchEntry[c]) clean[c] = watchEntry[c]; });
+  watchEntry = clean;
+  try { localStorage.setItem(LS_WATCH, JSON.stringify([...watchSet])); } catch (e) {}
+  try { localStorage.setItem(LS_WATCH_ENTRY, JSON.stringify(clean)); } catch (e) {}
+}
+
+// 「60下跌」自选池（独立于上面的 5 分钟自选，规则见文件后段）
+const LS_WATCH60 = 'cb_watch60';
+let watch60 = new Set(JSON.parse(localStorage.getItem(LS_WATCH60) || '[]'));
+let w60Info = new Map();          // code -> {chg: 60分钟涨跌幅(小数), mid: 当天是否碰过中轨}
+function persistWatch60() {
+  try { localStorage.setItem(LS_WATCH60, JSON.stringify([...watch60])); } catch (e) {}
+}
+
+// K 线周期（点哪个列表就自动切到对应周期）
+const LS_TF = 'cb_tf';
+let curTf = (localStorage.getItem(LS_TF) === '60m') ? '60m' : '5m';
+function setTfButtons() {
+  const seg = $('tfSeg');
+  if (!seg) return;
+  seg.querySelectorAll('.tf-btn').forEach(b => {
+    b.classList.toggle('on', b.dataset.tf === curTf);
+  });
+}
+
+// 成交额降序的前 20 只代码（不足 20 只就返回现有的全部）
+function top20Codes() {
+  return [...allRows]
+    .sort((a, b) => (b.amount_wan || 0) - (a.amount_wan || 0))
+    .slice(0, 20)
+    .map(r => r.code);
+}
+// 成交额前 20 集合；数据不足 20 只时返回 null → 不剪枝（避免开盘前把池子清空）
+function top20Set() {
+  return (allRows && allRows.length >= 20) ? new Set(top20Codes()) : null;
+}
+// 「成交额前 20」剪枝：掉出前 20 的成员一律剔除，返回剔除数量（数据未就绪时不剪枝）
+function pruneToTop20(members, drop) {
+  const t20 = top20Set();
+  if (!t20) return 0;
+  let cut = 0;
+  Array.from(members).forEach(code => { if (!t20.has(code)) { drop(code); cut++; } });
+  return cut;
+}
+// 多个列表（数组或 Set）去重合并，保持顺序、过滤空值
+function uniqCodes(...lists) {
+  const out = [], seen = new Set();
+  lists.forEach(list => (list || []).forEach(c => {
+    if (c && !seen.has(c)) { seen.add(c); out.push(c); }
+  }));
+  return out;
+}
+
+try { localStorage.removeItem('cb_refresh_sec'); } catch (e) {}   // 清掉旧键
+let refreshSec = parseInt(localStorage.getItem(LS_KEY) || String(DEFAULT_REFRESH_SEC), 10);
+if (isNaN(refreshSec) || REFRESH_OPTS.indexOf(refreshSec) < 0) refreshSec = DEFAULT_REFRESH_SEC;
+
+// ==================== 格式化工具 ====================
+function cls(v) {
+  if (v == null || isNaN(v)) return 'flat';
+  return v > 0 ? 'up' : (v < 0 ? 'down' : 'flat');
+}
+function sign(v, digits) {
+  if (v == null || isNaN(v)) return '--';
+  const s = v > 0 ? '+' : '';
+  return s + v.toFixed(digits == null ? 2 : digits);
+}
+function fmtAmt(wan) {           // 万元 → 显示
+  if (wan == null || isNaN(wan)) return '--';
+  if (wan >= 10000) return (wan / 10000).toFixed(2) + ' 亿';
+  if (wan >= 1000) return wan.toFixed(0) + ' 万';
+  return wan.toFixed(1) + ' 万';
+}
+function fmtVol(hand) {          // 手 → 显示（万手）
+  if (hand == null || isNaN(hand)) return '--';
+  if (hand >= 10000) return (hand / 10000).toFixed(2) + ' 万';
+  return hand.toFixed(0);
+}
+function rankCls(i) { return i < 3 ? ' rank top r' + (i + 1) : ' rank'; }
+function arrow(pct) {           // 涨跌箭头
+  if (pct == null || isNaN(pct)) return '';
+  return pct > 0 ? '▲' : (pct < 0 ? '▼' : '');
+}
+function setText(el, txt) { if (el && el.textContent !== txt) el.textContent = txt; }
+function setTone(el, c) {       // 只切换 up/down/flat，保留闪烁等附加 class
+  if (!el) return;
+  el.classList.remove('up', 'down', 'flat');
+  el.classList.add(c);
+}
+
+// ==================== 全局状态 ====================
+let allRows = [];                // 后端返回的全市场行情
+let sortKey = 'amount_wan';      // 当前排序字段
+let sortDir = 'desc';            // desc / asc
+let searchText = '';             // 搜索词
+let prevPrice = {};              // 上一次价格（用于闪烁）
+let maxAmt = 0;                  // 当前视图内最大成交额（成交额条相对宽度用）
+let lastPayload = null;          // 最近一次 /api/quotes 响应
+let lastMarket = '', lastTs = '', lastError = '';
+let failCnt = 0;
+const _urlCode = (new URLSearchParams(location.search).get('code') || '').trim();
+let curCode = _urlCode || localStorage.getItem(LS_CUR) || null;
+let chartLastLoad = 0;
+
+// ==================== 排序 / 过滤 ====================
+function computeRows() {
+  const kw = searchText.trim().toLowerCase();
+  let rows = allRows;
+  if (kw) {
+    rows = allRows.filter(r =>
+      r.code.includes(kw) ||
+      (r.name || '').toLowerCase().includes(kw) ||
+      (r.stock || '').includes(kw));
+  }
+  const dir = sortDir === 'asc' ? 1 : -1;
+  rows = rows.slice().sort((a, b) => {
+    if (sortKey === 'name') return (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN') * dir;
+    const va = a[sortKey], vb = b[sortKey];
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    return (va - vb) * dir;
+  });
+  if (!kw) rows = rows.slice(0, 20);    // 默认视图保持 Top20，搜索时显示全部命中
+  return rows;
+}
+
+// ==================== 渲染调度 ====================
+// 用 requestAnimationFrame 合并同一帧内的多次触发（刷新 + 搜索 + 排序同时到达也只渲染一次）
+let renderPending = false;
+function scheduleRender() {
+  if (renderPending) return;
+  renderPending = true;
+  requestAnimationFrame(() => { renderPending = false; applyRender(); });
+}
+
+function applyRender() {
+  const d = lastPayload;
+  if (!d || document.hidden) return;      // 后台标签页不浪费 CPU
+
+  const pillMap = { '交易中': 'live', '午间休市': 'noon', '盘前': 'noon', '已收盘': 'closed', '休市': 'closed' };
+  $('market').textContent = d.market || '--';
+  $('market').className = 'pill ' + (pillMap[d.market] || 'closed');
+  $('total').textContent = d.total != null ? d.total : '--';
+  const tsStr = d.ts || '--';
+  $('ts').textContent = tsStr;
+  updateTsRel(tsStr);
+  document.title = '可转债监控 · ' + (d.market || '') + (curCode ? ' · ' + curCode : '');
+
+  allRows = d.rows || [];
+  // 溢价率由 /api/premium 单独下发，合并进行情行（绑到行对象，排序/搜索才认得）
+  allRows.forEach(r => { const p = premMap[r.code]; r.prem = (p && p.pr != null) ? p.pr : null; });
+  // 校验上次选中的债是否还存在（服务重启/清单变化）
+  if (curCode && curCode !== _urlCode && !allRows.some(r => r.code === curCode)) {
+    curCode = null;
+    localStorage.removeItem(LS_CUR);
+  }
+  const rows = computeRows();
+  $('cnt').textContent = allRows.length ? '显示 ' + rows.length + ' / ' + allRows.length : '--';
+
+  renderRows(rows);
+  renderWatch();
+  render60();
+  renderStats();
+}
+
+function render(d) { lastPayload = d; scheduleRender(); }
+
+// ==================== 市场概览（涨跌家数 / 总成交额 / 分布）====================
+function renderStats() {
+  const rows = allRows || [];
+  let up = 0, down = 0, flat = 0, sum = 0, pctSum = 0, n = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const p = rows[i].change_pct;
+    sum += rows[i].amount_wan || 0;
+    if (p == null || isNaN(p)) continue;
+    if (p > 0) up++; else if (p < 0) down++; else flat++;
+    pctSum += p; n++;
+  }
+  setText($('upCnt'), String(up));
+  setText($('downCnt'), String(down));
+  setText($('sumAmt'), sum >= 10000 ? (sum / 10000).toFixed(0) + ' 亿' : sum.toFixed(0) + ' 万');
+  const avg = n ? pctSum / n : 0;
+  setText($('avgPct'), n ? sign(avg, 2) + '%' : '--');
+  setTone($('avgPct'), cls(avg));
+  const tot = Math.max(1, up + down + flat);
+  const bu = $('bUp'), bf = $('bFlat'), bd = $('bDown');
+  if (bu) bu.style.width = (up / tot * 100) + '%';
+  if (bf) bf.style.width = (flat / tot * 100) + '%';
+  if (bd) bd.style.width = (down / tot * 100) + '%';
+}
+
+// ==================== 表格：增量渲染 ====================
+// 只在「行集合/顺序」变化时重建 DOM，其余情况逐格更新文本，
+// 避免每 10 秒整表重排导致的闪烁、滚动跳动和 hover 丢失。
+let rowSig = '';
+const rowRefs = new Map();       // code -> {tr, chk, price, pct, amt, prem, vol, high, low}
+
+function buildRow(r, i) {
+  const tr = document.createElement('tr');
+  tr.dataset.code = r.code;
+  tr.innerHTML =
+    '<td><input type="checkbox" class="wchk" data-code="' + r.code + '"></td>' +
+    '<td><span class="' + rankCls(i) + '">' + (i + 1) + '</span></td>' +
+    '<td class="name">' + r.name + '<span class="stock">' + (r.stock || '') + '</span>' + '<span class="rd-tag"></span>' + '<span class="mid-tag"></span></td>' +
+    '<td class="num"></td>' +
+    '<td><span class="chg-badge"></span></td>' +
+    '<td class="amount"></td>' +
+    '<td class="num prem"></td>' +
+    '<td class="num"></td>' +
+    '<td class="num hide-sm"></td>' +
+    '<td class="num hide-sm"></td>' +
+    '<td><button class="kbtn" data-code="' + r.code + '">K线</button></td>';
+  return {
+    tr: tr,
+    chk: tr.children[0].firstElementChild,
+    rdTag: tr.children[2].querySelector('.rd-tag'),
+    midTag: tr.children[2].querySelector('.mid-tag'),
+    price: tr.children[3],
+    pct: tr.children[4].firstElementChild,
+    amt: tr.children[5],
+    prem: tr.children[6],
+    vol: tr.children[7],
+    high: tr.children[8],
+    low: tr.children[9],
+  };
+}
+
+function updateRow(ref, r) {
+  if (!ref) return;
+  const c = cls(r.change_pct);
+
+  ref.tr.classList.toggle('sel', r.code === curCode);
+
+  // 现价 + 变动闪烁
+  setText(ref.price, r.price != null ? r.price.toFixed(3) : '--');
+  setTone(ref.price, c);
+  ref.price.classList.remove('flash-up', 'flash-down');
+  const prev = prevPrice[r.code];
+  if (prev != null && r.price != null && r.price !== prev) {
+    void ref.price.offsetWidth;                 // 强制回流以重启 CSS 动画
+    ref.price.classList.add(r.price > prev ? 'flash-up' : 'flash-down');
+  }
+
+  // 涨跌幅
+  setText(ref.pct, r.change_pct != null
+    ? (arrow(r.change_pct) + ' ' + sign(r.change_pct, 2) + '%') : '--');
+  setTone(ref.pct, c);
+  ref.pct.title = '涨跌额 ' + sign(r.change);
+
+  setText(ref.amt, fmtAmt(r.amount_wan));
+  setTone(ref.amt, c);
+  const _amt = r.amount_wan || 0;
+  ref.amt.style.setProperty('--p', (maxAmt > 0 ? Math.min(100, _amt / maxAmt * 100) : 0).toFixed(1));
+  ref.amt.style.setProperty('--bar', c === 'up' ? 'rgba(229,52,43,.22)'
+                              : c === 'down' ? 'rgba(10,158,92,.22)' : 'rgba(100,116,139,.16)');
+  // 溢价率：不按红涨绿跌着色，避免与「涨跌幅」的红绿混淆（负值即折价）
+  const pr = r.prem;
+  setText(ref.prem, pr == null ? '--' : sign(pr, 2) + '%');
+  ref.prem.title = pr == null ? '溢价率暂无数据'
+    : '转股溢价率 ' + sign(pr, 2) + '%' + (pr < 0 ? '（折价）' : '');
+
+  setText(ref.vol, fmtVol(r.volume));
+  setText(ref.high, r.high != null ? r.high.toFixed(3) : '--');
+  setText(ref.low, r.low != null ? r.low.toFixed(3) : '--');
+
+  const wantChk = watchSet.has(r.code);
+  if (ref.chk.checked !== wantChk) ref.chk.checked = wantChk;
+
+  if (ref.rdTag) {                       // 已公布强赎：淡靛小标，悬停看赎回公告/登记日
+    const rd = redeemMap[r.code];
+    ref.rdTag.textContent = rd ? '强赎' : '';
+    ref.rdTag.className = rd ? 'rd-tag rd-flag' : 'rd-tag';
+    ref.rdTag.title = rd ? ('已公告强赎\uff5c公告 ' + (rd.notice || '--') + ' · 赎回登记日 '
+                            + (rd.record || '待定') + ' · 赎回价 ' + (rd.price != null ? rd.price : '--'))
+                         : '';
+  }
+  paintMidTag(ref.midTag, midTouch.get(r.code));
+}
+
+function emptyMsg() {
+  const d = lastPayload || {};
+  if (allRows.length) return '没有匹配「' + searchText + '」的转债';
+  if (d.error) return '<span style="color:#e0342e">行情拉取异常：' + d.error + '</span>';
+  // 服务刚启动，首次需先拉存续清单再拉行情，约 10~25 秒
+  return '<span class="spin">⛯</span> 服务正在首次拉取全市场行情，请稍候（约 10~25 秒，会自动刷新）';
+}
+
+function renderRows(rows) {
+  const tb = $('tbody');
+  if (!rows.length) {
+    const msg = emptyMsg();
+    if (rowSig !== '__empty__' || tb.dataset.msg !== msg) {
+      tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#9aa0a6;padding:32px 0">'
+        + msg + '</td></tr>';
+      tb.dataset.msg = msg;
+      rowRefs.clear();
+      rowSig = '__empty__';
+      prevPrice = {};
+    }
+    return;
+  }
+
+  const sig = rows.map(r => r.code).join(',');
+  if (sig !== rowSig) {
+    const frag = document.createDocumentFragment();
+    rowRefs.clear();
+    rows.forEach((r, i) => {
+      const ref = buildRow(r, i);
+      rowRefs.set(r.code, ref);
+      frag.appendChild(ref.tr);
+    });
+    tb.innerHTML = '';
+    tb.appendChild(frag);
+    rowSig = sig;
+    prevPrice = {};                 // 重建后丢弃旧价格，避免误闪
+  }
+
+  maxAmt = rows.reduce((m, r) => Math.max(m, r.amount_wan || 0), 0);
+  rows.forEach(r => updateRow(rowRefs.get(r.code), r));
+
+  // 记录本轮价格（同时剔除已不在视图内的代码）
+  const np = {};
+  rows.forEach(r => { np[r.code] = r.price; });
+  prevPrice = np;
+}
+
+// ==================== 自选：增量渲染 ====================
+let watchSig = '';
+const watchRefs = new Map();
+
+function buildWatchItem(r) {
+  const el = document.createElement('div');
+  el.className = 'watch-item';
+  el.dataset.code = r.code;
+  el.innerHTML =
+    '<button class="watch-rm" data-code="' + r.code + '" title="移除">×</button>' +
+    '<div class="wi-main" data-code="' + r.code + '">' +
+      '<div class="wi-name">' + r.name + '<span class="code">' + r.code + '</span>'
+        + '<span class="mid-tag"></span></div>' +
+      '<div class="wi-row"><span class="num"></span><span class="chg-badge"></span>'
+        + '<span class="strong-tag"></span></div>' +
+    '</div>';
+  return {
+    el: el,
+    midTag: el.querySelector('.wi-name .mid-tag'),
+    price: el.querySelector('.wi-row .num'),
+    pct: el.querySelector('.wi-row .chg-badge'),
+    strong: el.querySelector('.wi-row .strong-tag'),
+  };
+}
+
+function renderWatch() {
+  const list = $('watchList');
+  if (!list) return;
+  $('watchCnt').textContent = watchSet.size;
+
+  if (!watchSet.size) {
+    if (watchSig !== '__empty__') {
+      list.innerHTML = '<div class="watch-empty">成交额前 20 里，<br>一路不涨、且其中 2 根跌超 0.25% 的债会自动进这里</div>';
+      watchRefs.clear();
+      watchSig = '__empty__';
+    }
+    return;
+  }
+  // 排序：这段连跌里「跌超 0.25%」的根数越多越靠前（根数相同则保持原本的成交额顺序）
+  const items = allRows.filter(r => watchSet.has(r.code))
+                       .sort((a, b) => (watchStrong.get(b.code) || 0)
+                                     - (watchStrong.get(a.code) || 0));
+  if (!items.length) {
+    if (watchSig !== '__none__') {
+      list.innerHTML = '<div class="watch-empty">自选中的转债暂不在当前清单内</div>';
+      watchRefs.clear();
+      watchSig = '__none__';
+    }
+    return;
+  }
+
+  const sig = items.map(r => r.code).join(',');
+  if (sig !== watchSig) {
+    const frag = document.createDocumentFragment();
+    watchRefs.clear();
+    items.forEach(r => {
+      const ref = buildWatchItem(r);
+      watchRefs.set(r.code, ref);
+      frag.appendChild(ref.el);
+    });
+    list.innerHTML = '';
+    list.appendChild(frag);
+    watchSig = sig;
+  }
+
+  items.forEach(r => {
+    const ref = watchRefs.get(r.code);
+    if (!ref) return;
+    const c = cls(r.change_pct);
+    ref.el.classList.toggle('sel', r.code === curCode);
+    setText(ref.price, r.price != null ? r.price.toFixed(3) : '--');
+    setTone(ref.price, c);
+    setText(ref.pct, r.change_pct != null ? sign(r.change_pct, 2) + '%' : '--');
+    setTone(ref.pct, c);
+
+    const sn = watchStrong.get(r.code) || 0;
+    setText(ref.strong, sn ? '连跌达标 ' + sn + ' 根' : '');
+
+    const mt = midTouch.get(r.code);
+    ref.el.classList.toggle('mid-live', !!(mt && mt.live));
+    paintMidTag(ref.midTag, mt);
+  });
+}
+
+// ==================== 60下跌 列表渲染 ====================
+let w60Sig = '';
+const w60Refs = new Map();
+
+function render60() {
+  const list = $('watch60List');
+  if (!list) return;
+  setText($('w60Cnt'), String(watch60.size));
+
+  if (!watch60.size) {
+    if (w60Sig !== '__empty__') {
+      list.innerHTML = '<div class="watch-empty">成交额前 20 里，<br>60 分钟 K 线跌超 1.9% 的债会自动进这里</div>';
+      w60Refs.clear(); w60Sig = '__empty__';
+    }
+    return;
+  }
+  const items = allRows.filter(r => watch60.has(r.code));
+  if (!items.length) {
+    if (w60Sig !== '__none__') {
+      list.innerHTML = '<div class="watch-empty">池中的转债暂不在当前清单内</div>';
+      w60Refs.clear(); w60Sig = '__none__';
+    }
+    return;
+  }
+  const sig = items.map(r => r.code).join(',');
+  if (sig !== w60Sig) {
+    const frag = document.createDocumentFragment();
+    w60Refs.clear();
+    items.forEach(r => {
+      const ref = buildWatchItem(r);
+      w60Refs.set(r.code, ref);
+      frag.appendChild(ref.el);
+    });
+    list.innerHTML = '';
+    list.appendChild(frag);
+    w60Sig = sig;
+  }
+  items.forEach(r => {
+    const ref = w60Refs.get(r.code);
+    if (!ref) return;
+    const c = cls(r.change_pct);
+    ref.el.classList.toggle('sel', r.code === curCode);
+    setText(ref.price, r.price != null ? r.price.toFixed(3) : '--');
+    setTone(ref.price, c);
+    const it = w60Info.get(r.code);
+    const g = (it && it.chg != null) ? it.chg : null;
+    setText(ref.pct, g != null ? sign(g * 100, 2) + '%' : '--');
+    setTone(ref.pct, cls(g == null ? 0 : g));
+    paintMidTag(ref.midTag, null);
+  });
+}
+
+// ==================== 相对时间显示（N 秒前）====================
+function updateTsRel(tsStr) {
+  const el = $('tsRel');
+  if (!tsStr || tsStr === '--') { el.textContent = ''; return; }
+  const t = new Date(tsStr.replace(/-/g, '/')).getTime();
+  if (isNaN(t)) { el.textContent = ''; return; }
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  el.textContent = s < 60 ? '（' + s + ' 秒前）' : '（' + Math.floor(s / 60) + ' 分钟前）';
+}
+setInterval(() => { if ($('ts').textContent) updateTsRel($('ts').textContent); }, 5000);
+
+// ==================== K线图 ====================
+let chart = null;
+function ensureChart() {
+  if (chart) return chart;
+  chart = echarts.init($('chart'));
+  window.addEventListener('resize', () => chart && chart.resize());
+  return chart;
+}
+
+function renderChart(d, resetZoom) {
+  resetZoom = resetZoom !== false;
+  const times = d.times || [];
+  const kline = d.kline || [];
+  const vols = d.vol || [];
+  if (!times.length) {
+    $('chartMeta').textContent = '该转债暂无K线数据';
+    return;
+  }
+  const volColors = kline.map(k => k[1] >= k[0] ? 'rgba(224,52,46,.55)' : 'rgba(10,158,92,.55)');
+  const boll = d.boll || {};
+
+  ensureChart();
+  const option = {
+    animation: false,
+    backgroundColor: '#fff',
+    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#6b7280' } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      backgroundColor: 'rgba(255,255,255,.97)',
+      borderColor: '#e5e7eb',
+      textStyle: { color: '#1f2329', fontSize: 12 },
+      formatter: function (ps) {
+        const i = ps[0].dataIndex;
+        const k = kline[i];
+        const t = times[i];
+        let chgTxt = '--', pctTxt = '--', pctCls = '#9ca3af', stateTxt = '';
+        const prevK = i > 0 ? kline[i - 1] : null;
+        if (prevK && prevK[1] > 0) {
+          const chg = k[1] - prevK[1];
+          const pct = chg / prevK[1] * 100;
+          const isUp = chg > 0, isDn = chg < 0;      // 严格比原始价格：涨 0.001 元也算「涨」
+          pctCls = isUp ? '#e0342e' : (isDn ? '#0a9e5c' : '#9ca3af');   // 走平用中性灰，不冒充上涨
+          chgTxt = (isUp ? '+' : '') + chg.toFixed(3);
+          // 百分比常态 2 位；数值小到会被四舍五入成 0.00% 时保留 4 位，
+          // 免得「涨了 0.003 元」在界面上显示成 0.00% 而被误读为走平。
+          const pDec = (pct !== 0 && Math.abs(pct) < 0.01) ? 4 : 2;
+          pctTxt = (isUp ? '+' : '') + pct.toFixed(pDec) + '%';
+          stateTxt = '　<span style="color:' + pctCls + ';font-weight:600">【'
+                   + (isUp ? '涨' : (isDn ? '跌' : '平')) + '】</span>';
+        }
+        const up = boll.upper && boll.upper[i] != null ? boll.upper[i].toFixed(3) : '--';
+        const md = boll.mid && boll.mid[i] != null ? boll.mid[i].toFixed(3) : '--';
+        const lo = boll.lower && boll.lower[i] != null ? boll.lower[i].toFixed(3) : '--';
+        const vol = vols[i] != null ? (vols[i] / 10000).toFixed(2) + ' 万手' : '--';
+        return '<b>' + t + '</b><br/>' +
+          '开 ' + k[0].toFixed(3) + '　高 ' + k[3].toFixed(3) + '<br/>' +
+          '低 ' + k[2].toFixed(3) + '　收 ' + k[1].toFixed(3) + '<br/>' +
+          '涨跌 <span style="color:' + pctCls + ';font-weight:600">' + chgTxt + '</span>　' +
+          '涨跌幅 <span style="color:' + pctCls + ';font-weight:600">' + pctTxt + '</span>' + stateTxt + '<br/>' +
+          '成交量 ' + vol + '<br/>' +
+          '<span style="color:#f59e0b">上轨</span> ' + up +
+          '　<span style="color:#2456d6">中轨</span> ' + md +
+          '　<span style="color:#10b981">下轨</span> ' + lo;
+      }
+    },
+    legend: {
+      data: ['上轨', '中轨', '下轨'],
+      right: 8, top: 4, itemWidth: 14, itemHeight: 2, textStyle: { fontSize: 11, color: '#6b7280' }
+    },
+    grid: [
+      { left: 64, right: 16, top: 32, height: '54%' },
+      { left: 64, right: 16, top: '76%', height: '14%' }
+    ],
+    xAxis: [
+      {
+        type: 'category', data: times, gridIndex: 0, boundaryGap: true,
+        axisLine: { lineStyle: { color: '#d1d5db' } }, axisLabel: { show: false },
+        axisTick: { show: false }, min: 'dataMin', max: 'dataMax'
+      },
+      {
+        type: 'category', data: times, gridIndex: 1, boundaryGap: true,
+        axisLine: { lineStyle: { color: '#d1d5db' } },
+        axisLabel: { color: '#6b7280', fontSize: 10 }, axisTick: { show: false },
+        min: 'dataMin', max: 'dataMax'
+      }
+    ],
+    yAxis: [
+      {
+        gridIndex: 0, scale: true,
+        splitLine: { lineStyle: { color: '#eef0f3' } },
+        axisLabel: { color: '#6b7280', fontSize: 10 }
+      },
+      {
+        gridIndex: 1, scale: true, splitLine: { show: false },
+        axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false }
+      }
+    ],
+    series: [
+      {
+        name: 'K线', type: 'candlestick', data: kline,
+        itemStyle: { color: '#e0342e', color0: '#0a9e5c', borderColor: '#e0342e', borderColor0: '#0a9e5c' }
+      },
+      {
+        name: '上轨', type: 'line', data: boll.upper || [], symbol: 'none',
+        lineStyle: { width: 1, color: '#f59e0b' }, smooth: true, z: 3
+      },
+      {
+        name: '中轨', type: 'line', data: boll.mid || [], symbol: 'none',
+        lineStyle: { width: 1.2, color: '#2456d6' }, smooth: true, z: 3
+      },
+      {
+        name: '下轨', type: 'line', data: boll.lower || [], symbol: 'none',
+        lineStyle: { width: 1, color: '#10b981' }, smooth: true, z: 3
+      },
+      {
+        name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: vols,
+        itemStyle: { color: function (p) { return volColors[p.dataIndex] || 'rgba(107,114,128,.4)'; } },
+        barWidth: '60%'
+      }
+    ]
+  };
+
+  // 仅在切换标的/首次渲染时下发 dataZoom；定时刷新时省略，
+  // 这样用户手动缩放的视窗不会被每 10 秒的自动刷新重置。
+  if (resetZoom) {
+    const ZOOM_WIN = 48;                       // 默认视图：最近一天 5 分钟 K 线
+    const showN = Math.min(times.length, ZOOM_WIN);
+    const zs = times.length > ZOOM_WIN
+      ? Math.max(0, 100 * (times.length - showN) / times.length) : 0;
+    option.dataZoom = [
+      { type: 'inside', xAxisIndex: [0, 1], start: zs, end: 100 },
+      { type: 'slider', xAxisIndex: [0, 1], bottom: 4, height: 14, borderColor: '#e5e7eb', start: zs, end: 100 }
+    ];
+  }
+
+  chart.setOption(option, { notMerge: false, lazyUpdate: false });
+
+  const is60 = (curTf === '60m');
+  $('chartTitle').innerHTML = (d.name || '') + ' <span class="code">' + d.code + '</span>' +
+    '<span class="tag">' + (is60 ? '60分钟' : '5分钟') + 'K线 · 布林线(20,2)</span>';
+  $('chartMeta').textContent = '数据时间 ' + (d.ts || '--') + ' · ' + times.length + ' 根'
+    + (is60 ? midMetaText60(d) : midMetaText(d));
+  $('chartEmpty').style.display = 'none';
+  $('chart').style.display = 'block';
+  chart.resize();
+}
+
+async function loadKline(code, name, resetZoom, tf) {
+  curCode = code;
+  if (tf) { curTf = tf; try { localStorage.setItem(LS_TF, curTf); } catch (e) {} }
+  setTfButtons();
+  localStorage.setItem(LS_CUR, code);
+  document.querySelectorAll('#tbody tr').forEach(tr => {
+    tr.classList.toggle('sel', tr.dataset.code === code);
+  });
+  document.querySelectorAll('#watchList .watch-item, #watch60List .watch-item').forEach(it => {
+    it.classList.toggle('sel', it.dataset.code === code);
+  });
+  $('chartMeta').textContent = '加载中…';
+  try {
+    let d = null;
+    if (curTf === '60m') {
+      const res = await fetch('/api/klines60?codes=' + encodeURIComponent(code) + '&tail=320',
+                              { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const map = await res.json();
+      d = map && map[code];
+      if (!d || d.error) { $('chartMeta').textContent = (d && d.error) || '60 分钟 K 线无数据'; return; }
+    } else {
+      const res = await fetch('/api/kline?code=' + encodeURIComponent(code), { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      d = await res.json();
+      if (d.error) { $('chartMeta').textContent = d.error; return; }
+    }
+    if (!d.name && name) d.name = name;
+    renderChart(d, resetZoom);
+    chartLastLoad = Date.now();
+  } catch (e) {
+    $('chartMeta').textContent = 'K线加载失败：' + e.message;
+  }
+}
+
+// ==================== 表头排序 ====================
+document.querySelector('thead').addEventListener('click', (ev) => {
+  const th = ev.target.closest('th[data-sort]');
+  if (!th) return;
+  const key = th.dataset.sort;
+  if (sortKey === key) {
+    sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+  } else {
+    sortKey = key;
+    sortDir = 'desc';
+  }
+  document.querySelectorAll('thead th[data-sort]').forEach(t => {
+    t.classList.toggle('sorted', t.dataset.sort === sortKey);
+    if (t.dataset.sort === sortKey) {
+      t.setAttribute('data-arrow', sortDir === 'desc' ? '▼' : '▲');
+    }
+  });
+  scheduleRender();
+});
+
+// ==================== 搜索 ====================
+$('search').addEventListener('input', (ev) => { searchText = ev.target.value; scheduleRender(); });
+$('search').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') {
+    $('search').value = ''; searchText = ''; scheduleRender();
+  }
+});
+
+// ==================== 表格交互（事件委托）====================
+$('tbody').addEventListener('click', (ev) => {
+  if (ev.target.closest('.wchk')) return;   // 复选框单独处理，不触发K线
+  const btn = ev.target.closest('.kbtn');
+  if (btn) { loadKline(btn.dataset.code); return; }
+  const tr = ev.target.closest('tr[data-code]');
+  if (tr) loadKline(tr.dataset.code);
+});
+$('tbody').addEventListener('change', (ev) => {
+  const chk = ev.target.closest('.wchk');
+  if (!chk) return;
+  if (chk.checked) { watchSet.add(chk.dataset.code); watchEntry[chk.dataset.code] = nowBarStr(); }
+  else { watchSet.delete(chk.dataset.code); delete watchEntry[chk.dataset.code]; }
+  persistWatch();
+  scheduleRender();
+  midBandScan();                      // 自选变动后立即复核中轨状态
+});
+// 自选框点击：移除 / 打开K线
+$('watchList').addEventListener('click', (ev) => {
+  const rm = ev.target.closest('.watch-rm');
+  if (rm) {
+    feedPush(rm.dataset.code, 'out', '手动移除');
+    watchSet.delete(rm.dataset.code);
+    midTouch.delete(rm.dataset.code);
+    persistWatch();
+    scheduleRender();
+    return;
+  }
+  const main = ev.target.closest('.wi-main');
+  if (main) loadKline(main.dataset.code, null, true, '5m');   // 「5下跌」→ 5 分钟图
+});
+// 清空自选
+$('watchClear').addEventListener('click', () => {
+  if (!watchSet.size) return;
+  feedPush('', 'out', '手动清空自选池（' + watchSet.size + ' 只）');
+  watchSet.clear();
+  watchEntry = {};
+  midTouch.clear();
+  persistWatch();
+  scheduleRender();
+});
+// 表头全选：作用于当前可见行
+const selAll = document.getElementById('selAll');
+if (selAll) {
+  selAll.addEventListener('change', () => {
+    const visible = computeRows();
+    if (selAll.checked) visible.forEach(r => { watchSet.add(r.code); watchEntry[r.code] = nowBarStr(); });
+    else visible.forEach(r => { watchSet.delete(r.code); delete watchEntry[r.code]; });
+    persistWatch();
+    scheduleRender();
+    midBandScan();
+  });
+}
+
+// ==================== 溢价率（/api/premium，服务端缓存 60s）====================
+let premMap = {};                // code -> {pr, cv, cp}
+let premAt = 0;                  // 上次拉取时刻（客户端节流用）
+const PREM_GAP = 30000;          // 客户端节流 30s：上游对连续调用敏感
+
+async function loadPremium() {
+  if (Date.now() - premAt < PREM_GAP) return;
+  premAt = Date.now();
+  try {
+    const res = await fetch('/api/premium', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    premMap = (d && d.data) || {};
+    scheduleRender();
+  } catch (e) {
+    console.warn('溢价率加载失败', e);
+  }
+}
+
+// ==================== 已公布强赎名单（/api/redeem，服务端缓存 30 分钟）====================
+// 已公布强赎的债一律不选入「5下跌」「60下跌」；已在池内的会被移出（手动加进去的也算）。
+let redeemMap = {};              // code -> {name, notice, record, price, exec}
+let redeemSet = new Set();
+let redeemAt = 0;
+const REDEEM_GAP = 600000;       // 客户端节流 10 分钟（服务端另缓存 30 分钟）
+
+// 判据（与后端 _is_redeeming 保持一致）：未退市 且 出现「赎回」系列字段任一
+const RD_URL = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_BOND_CB_LIST'
+             + '&columns=SECURITY_CODE,SECURITY_NAME_ABBR,DELIST_DATE,NOTICE_DATE_SH,RECORD_DATE_SH,'
+             + 'EXECUTE_START_DATESH,EXECUTE_PRICE_SH,EXECUTE_REASON_SH'
+             + '&pageSize=500&sortColumns=SECURITY_CODE&sortTypes=1&source=WEB&client=WEB&pageNumber=';
+
+function rdOk(v) { return v != null && v !== '' && v !== 'None'; }
+
+function rdHit(r) {
+  if (rdOk(r.DELIST_DATE)) return false;                        // 已退市不算
+  const rs = String(r.EXECUTE_REASON_SH == null ? '' : r.EXECUTE_REASON_SH);
+  return rs === '4' || rs === '5'                               // 4/5 = 强制赎回（刚公告时只有它）
+      || rdOk(r.RECORD_DATE_SH)                                 // 赎回登记日
+      || rdOk(r.EXECUTE_PRICE_SH)                               // 赎回价格
+      || rdOk(r.EXECUTE_START_DATESH);                          // 赎回执行日
+}
+
+// 降级路径：服务端 /api/redeem 不可用时，浏览器直连东财（该接口允许跨域）。
+// 代价是每次全量拉 3 页；服务端接口恢复后自动改回本地路径。
+async function fetchRedeemDirect() {
+  const grab = p => fetch(RD_URL + p, { cache: 'no-store' }).then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  });
+  const first = await grab(1);
+  const r0 = (first && first.result) || {};
+  const pages = Math.max(1, Math.min(r0.pages || 1, 6));
+  const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => grab(i + 2).catch(() => null)));
+  const out = {};
+  [r0].concat(rest.map(x => (x && x.result) || {})).forEach(res => {
+    (res.data || []).forEach(r => {
+      const code = String(r.SECURITY_CODE || '');
+      if (!/^\d{6}$/.test(code) || !rdHit(r)) return;
+      out[code] = {
+        name: r.SECURITY_NAME_ABBR || '',
+        notice: String(r.NOTICE_DATE_SH || '').slice(0, 10),
+        record: String(r.RECORD_DATE_SH || '').slice(0, 10),
+        price: r.EXECUTE_PRICE_SH,
+        exec: String(r.EXECUTE_START_DATESH || '').slice(0, 10),
+      };
+    });
+  });
+  if (!Object.keys(out).length) throw new Error('empty');
+  return out;
+}
+
+async function loadRedeem() {
+  if (redeemAt && Date.now() - redeemAt < REDEEM_GAP) return;
+  let ok = false;
+  try {
+    const res = await fetch('/api/redeem', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    if (!d || d.error) throw new Error((d && d.error) || 'bad payload');
+    redeemMap = d.data || {};
+  } catch (e) {
+    try {                                    // 服务端接口不可用 → 直连东财兜底
+      redeemMap = await fetchRedeemDirect();
+      console.warn('强赎名单：服务端接口不可用，已改走直连东财', e);
+    } catch (e2) {
+      console.warn('强赎名单加载失败', e2);   // 保留上一次的名单，别把已排除的又放回来
+    }
+  }
+  if (Object.keys(redeemMap).length) { ok = true; redeemSet = new Set(Object.keys(redeemMap)); scheduleRender(); }
+  redeemAt = Date.now() - (ok ? 0 : REDEEM_GAP - 60000);   // 失败 60s 后重试
+}
+
+// ==================== 进出流水（最近 40 条，localStorage 持久化）====================
+// 为什么要它：剔除是「瞬间」发生的（入池后可能 10 秒内就被剔），事后根本看不见。
+// 有了流水就能当场核对：谁、几点、因为哪条规则、当时的判定数值是多少。
+const LS_FEED = 'cb_feed_v1';
+const FEED_MAX = 40;
+let feedLog = [];
+try { feedLog = JSON.parse(localStorage.getItem(LS_FEED) || '[]') || []; } catch (e) { feedLog = []; }
+
+function codeName(code) {
+  const r = allRows.find(x => x.code === code);
+  return (r && r.name) || code;
+}
+
+function feedPush(code, act, why) {
+  const d = new Date(), p = x => String(x).padStart(2, '0');
+  feedLog.unshift({
+    t: p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()),
+    n: codeName(code), a: act, w: why || '',
+  });
+  if (feedLog.length > FEED_MAX) feedLog.length = FEED_MAX;
+  try { localStorage.setItem(LS_FEED, JSON.stringify(feedLog)); } catch (e) {}
+  renderFeed();
+}
+
+function renderFeed() {
+  const el = $('feedList');
+  if (!el) return;
+  const cnt = $('feedCnt');
+  if (cnt) cnt.textContent = feedLog.length;
+  if (!feedLog.length) { el.innerHTML = '<span class="feed-empty">还没有进出记录</span>'; return; }
+  el.innerHTML = feedLog.map(x =>
+    '<div class="feed-item ' + (x.a === 'in' ? 'fi-in' : 'fi-out') + '">' +
+    '<b>' + x.t + '</b>' + x.n + '<i>' + (x.a === 'in' ? '入池' : '剔除') + '</i>' +
+    (x.w ? '<span class="fw">' + x.w + '</span>' : '') + '</div>').join('');
+}
+
+// ==================== 数据加载 ====================
+async function load() {
+  if (document.hidden) return;          // 后台标签页暂停轮询，回到前台再补
+  try {
+    const res = await fetch('/api/quotes', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    lastMarket = d.market; lastTs = d.ts; lastError = d.error || '';
+    render(d);
+    loadPremium();
+    loadRedeem();
+    // 选中转债联动刷新图表（≥30s 节流，避免高频拉K线）
+    if (curCode && Date.now() - chartLastLoad > 30000) {
+      const row = d.rows && d.rows.find(r => r.code === curCode);
+      loadKline(curCode, row && row.name, false);
+    }
+    failCnt = 0;
+    $('hint').textContent = '';
+  } catch (e) {
+    failCnt++;
+    const retryTxt = refreshSec > 0 ? (refreshSec + 's 后重试…') : '可点击「立即刷新」重试';
+    $('hint').innerHTML = '<span class="err">连接失败（' + e.message + '），' + retryTxt + '</span>';
+    if (!allRows.length) {
+      rowSig = '';                       // 强制下次渲染重建表格
+      $('tbody').innerHTML = '<tr><td colspan="11" style="text-align:center;color:#e0342e;padding:32px 0">'
+        + '无法连接后台服务（' + e.message + '）<br><span style="color:#6b7280;font-size:12px">'
+        + '请运行 cb_monitor\\start.bat 启动服务，或检查 8011 端口</span></td></tr>';
+    }
+  }
+}
+
+// 回到前台立刻补一次数据
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { scheduleRender(); load(); }
+});
+
+// ============ 破位剔除：入池之后（且 10:15 后）跌破【入池时的日内低点】即剔除 ============
+// 判定口径（命中即剔除，不要求是最新一根；但**必须是「下跌」的那根**）：
+//   ① 规则仅在「最新一根 K 线时间 ≥ 10:15」后启用（按 K 线时间，与系统时间脱钩）
+//   ② 基准 = 【入池那一刻已确定的日内低点】= 当天从开盘到「取样点【前一根】」的最低 low
+//      ⚠️ 取样点那一根**不算进基准**（它入池时还在走，low 会在入池后继续下探），
+//         但它**要参与检查**（它的收盘发生在入池之后）。2026-09-24 修，见下。
+//   ③ 入池取样点【之后】、且时间 ≥ 10:15 的任意一根已收盘 K 线，
+//      只要它**是「下跌」的那根**（收 < 前一根收）且其 low ≤ 基准 ×(1+容差)，
+//      即视为「跌破日内新低」→ 剔除。哪怕之后反弹，也算"跌破过"。
+//      ⚠️ 只认**最低价（low）**跌破，**不要求收盘价也在新低**（老大 2026-09-24 明确）。
+// ⚠️ 2026-09-24 修正（老大指出）：旧口径把基准取成【当天全段最低价】，而它是随行情动态变化的 ——
+//    只要当天最低价出现在 10:15 之后，那个最低点那根自己就恒满足判据 → 该债【整天】再也留不住，
+//    一入池就被秒剔。实例：丽岛转债 113680 当天最低 135.600 出现在 10:25，导致它 13:05 入池即被剔。
+//    老大原话："如果10:15后面，入选5下跌里面的5分钟k线跌破日内新低才剔除，
+//              不是说10:15分后有过跌破日内新低就永远剔除"。
+// ⚠️ 2026-09-24 二次澄清（老大原话）："是下跌的5分钟k线跌破过日内新低就剔除，
+//    不需要收盘价也在日内新低" → 判定加上「该根必须是下跌（收 < 前收）」这一条，
+//    并明确只看 low，不看 close。
+// 「当天」= 最新 K 线所属交易日（非系统日期）。
+const LOD_START = '10:15';       // 规则启用时点（按 K 线时间，与系统时间脱钩）
+const LOD_EPS   = 0.0005;        // 触及容差 0.05%（吸收浮点误差与擦边价）
+const LOD_TAIL  = 64;            // 需覆盖当天全部 5 分钟 K 线（A股一天 48 根），取 64 留余量
+
+function autoWatchOn() { const c = $('autoWatch'); return !!(c && c.checked); }
+
+// ==================== 只按「已收盘」的 K 线判断 ====================
+// 腾讯 K 线的时间标签 = 该根 5 分钟 K 线的「收盘时刻」。
+// 所以：标签时刻 > 当前时间 → 这根还在走（未收盘）→ 一律不参与任何入池/剔除判断。
+function barEndMs(ts) {                       // "YYYY-MM-DD HH:MM[:SS]" → 毫秒
+  const s = String(ts);
+  const y = +s.slice(0, 4), mo = +s.slice(5, 7), d = +s.slice(8, 10);
+  const h = +s.slice(11, 13), mi = +s.slice(14, 16);
+  if (!y || !mo || !d) return NaN;
+  return new Date(y, mo - 1, d, h, mi, 0).getTime();
+}
+// 已收盘的最后一根 K 线的下标（正在走的那根不算）
+function lastClosedIdx(d) {
+  const ts = d && d.times;
+  if (!ts || !ts.length) return -1;
+  const n = ts.length;
+  if (n < 2) return n - 1;
+  const t = barEndMs(ts[n - 1]);
+  return (isFinite(t) && Date.now() < t) ? n - 2 : n - 1;
+}
+
+// K 线时间戳（"YYYY-MM-DD HH:MM[:SS]"）的两个常用切片
+function dayOf(ts) { return String(ts).slice(0, 10); }   // "YYYY-MM-DD"
+function hmOf(ts)  { return String(ts).slice(11, 16); }  // "HH:MM"
+// 当前墙钟时间的 "HH:MM"（状态栏用）
+function hhmmNow() {
+  const d = new Date(), p = x => String(x).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function dayLowBreak(d, entry) {
+  const k = d && d.kline, ts = d && d.times;
+  if (!k || !ts || k.length < 4) return null;
+  const n = k.length;
+  const end = lastClosedIdx(d);                                // 只用已收盘的 K 线
+  if (end < 1) return null;                                    // 已收盘样本不足 → 不判定
+  const lastDay = dayOf(ts[n - 1]);              // 「当天」= 最新 K 线所属日
+  if (hmOf(ts[n - 1]) < LOD_START) return null;                // 尚未到 10:15 → 不判定
+
+  // 定位「入池取样点」：精确匹配（它已收盘）取它自己；匹配不到（取样点是「正在走那根」的
+  // 标签，或手动加入时的墙钟时间）则退化为「≤ entry 时刻的最后一根已收盘 K 线」
+  let ei = -1, exact = false;
+  if (entry) {
+    for (let i = 0; i <= end; i++) { if (String(ts[i]) === String(entry)) { ei = i; exact = true; break; } }
+    if (ei < 0) { for (let i = end; i >= 0; i--) { if (String(ts[i]) <= String(entry)) { ei = i; break; } } }
+  }
+  // 定位不到当日的入池点 → 不判定（宁可漏剔，也不误剔）
+  if (ei < 0 || dayOf(ts[ei]) !== lastDay) return null;
+
+  // 基准 = 当天「入池那一刻已经确定」的日内低点。
+  // ⚠️ 精确匹配时【不含 ei 那根】：它在入池时还在走，其 low 会在入池后继续下探；
+  //    若把它算进来，基准会被"未来数据"追低 → 之后再怎么跌都碰不到基准，永远不剔。
+  //    （欧通转债 123241：13:55 入池、取样点标签 14:00，14:00 收盘 low=908.847 变成基准 → 死锁）
+  const baseEnd = exact ? ei - 1 : ei;
+  let base = Infinity;
+  for (let i = 0; i <= baseEnd; i++) {
+    if (dayOf(ts[i]) !== lastDay) continue;
+    const lo = k[i][2];                                        // [开, 收, 低, 高]
+    if (typeof lo === 'number' && lo < base) base = lo;
+  }
+  if (!isFinite(base)) return null;
+
+  // 检查范围：取样点那根【自身】（精确匹配时它的收盘发生在入池之后）→ 直到最后一根已收盘；
+  //           且只看 10:15 之后。跌破基准 → 剔除。
+  const start = exact ? ei : ei + 1;
+  for (let i = start; i <= end; i++) {
+    if (dayOf(ts[i]) !== lastDay) continue;
+    if (hmOf(ts[i]) < LOD_START) continue;     // 只看 10:15 之后
+    // 只认「下跌」的那根（收 < 前一根收）；上涨/走平那根即使最低价创新低，也不算破位。
+    // 注意：只要求【最低价】跌破新低，**不要求收盘价也在新低**（老大 2026-09-24 明确）。
+    // 严格比较原始收盘价，不加任何容差。
+    if (i < 1 || !(k[i][1] < k[i - 1][1])) continue;
+    if (k[i][2] <= base * (1 + LOD_EPS)) {
+      return { base: base, at: ts[i], low: k[i][2], lowAt: ts[Math.max(0, baseEnd)] };
+    }
+  }
+  return null;
+}
+
+// ==================== 布林中轨触及监控（只认「下跌触中轨」）====================
+// 判定口径：某根 5 分钟 K 线「下跌」（收 < 前一根收）且其高低区间 [low, high] 覆盖布林中轨(MA20)，
+// 即 low <= 中轨 <= high —— 下跌过程中碰到/穿过中轨，才是要特别标记的信号（上涨碰到不算）。
+const MID_TAIL = 8;              // 判定只需最后几根，压缩载荷
+const MID_WIN = 10000;           // 每 10 秒核对一次（自选池：涨破 + 破位 + 中轨 合并一次遍历）
+let midTouch = new Map();        // code -> {t:'HH:MM', live:bool}；live=false 表示"曾触及"
+let midScanBusy = false;
+
+// 自动盯盘状态栏：扫描结果 + 破位剔除累计（两处扫描共用同一处文案，避免互相覆盖）
+let lastScanHM = '', lastScanMsg = '', lodDropCount = 0, riseDropCount = 0, outDropCount = 0;
+function renderAutoInfo() {
+  const el = $('autoInfo');
+  if (!el) return;
+  let msg = lastScanHM ? ('\u4e0a\u6b21\u626b\u63cf ' + lastScanHM) : '\u672a\u626b\u63cf';
+  if (lastScanMsg) msg += lastScanMsg;
+  if (riseDropCount) msg += ' \u00b7 \u6da8\u7834\u5254\u9664 ' + riseDropCount + ' \u53ea';
+  if (outDropCount) msg += ' \u00b7 \u51fa\u699c\u5254\u9664 ' + outDropCount + ' \u53ea';
+  if (lodDropCount) msg += ' \u00b7 \u7834\u4f4d\u5254\u9664 ' + lodDropCount + ' \u53ea';
+  if (marketClosed()) msg += ' \u00b7 \u5df2\u6536\u76d8\uff0c\u81ea\u52a8\u626b\u63cf\u5df2\u6682\u505c';
+  el.textContent = msg;
+}
+
+const MID_LOOKBACK = 6;          // 最近 6 根（约 30 分钟）内出现过即算「曾触」，且抗页面刷新
+
+// 第 i 根是否「下跌触中轨」：收 < 前一根收（下跌） 且 low <= 中轨 <= high（碰到/穿过）
+function dropTouchesMidAt(d, i) {
+  const k = d && d.kline, b = d && d.boll;
+  if (!k || !b || !b.mid || i < 1 || i >= k.length) return false;
+  const mid = b.mid[i];
+  if (mid == null) return false;
+  if (!(k[i][1] < k[i - 1][1])) return false;      // 必须「下跌」（收 < 前一根收）
+  const low = k[i][2], high = k[i][3];             // kline 项格式：[开, 收, 低, 高]
+  return low <= mid && mid <= high;
+}
+
+// 最近窗口内最近一次「下跌触中轨」；返回 {t:'HH:MM', live:bool} 或 null
+function recentDropToMid(d) {
+  const k = d && d.kline, ts = d && d.times;
+  if (!k || !ts || k.length < 2) return null;
+  const end = lastClosedIdx(d);                // 只看已收盘的 K 线
+  if (end < 1) return null;
+  const lastDay = dayOf(ts[k.length - 1]);
+  for (let i = end; i >= Math.max(1, end - MID_LOOKBACK + 1); i--) {
+    if (dayOf(ts[i]) !== lastDay) continue;
+    if (dropTouchesMidAt(d, i)) {
+      return { t: hmOf(ts[i]), live: (i === end) };
+    }
+  }
+  return null;
+}
+
+// 5 分钟图的提示（「5下跌」池的中轨 = 5 分钟布林中轨）
+function midMetaText(d) {
+  const r = recentDropToMid(d);
+  if (!r) return '';
+  return r.live
+    ? ' · ⚡最新已收盘 5 分钟 K 线「下跌」触 5 分钟中轨'
+    : ' · 曾「下跌」触 5 分钟中轨 @' + r.t;
+}
+
+// 60 分钟图的提示（「60下跌」池的中轨 = 60 分钟布林中轨，和上面那条不是同一条线）
+function midMetaText60(d) {
+  return (touchedMid60Today(d)
+    ? ' · 当天已触及 60 分钟布林中轨（或位于其下方）'
+    : ' · 当天未触及 60 分钟布林中轨')
+    + (hitDayHigh60Today(d) ? ' · 有下跌 K 线触及当天最高价' : '');
+}
+
+function paintMidTag(el, rec) {
+  if (!el) return;
+  if (!rec) {
+    if (el.textContent) { el.textContent = ''; el.className = 'mid-tag'; el.title = ''; }
+    return;
+  }
+  const txt = rec.live ? '⚡5分中轨' : '曾触5分中轨';
+  if (el.textContent !== txt) el.textContent = txt;
+  const want = 'mid-badge ' + (rec.live ? 'live' : 'past');
+  if (el.className !== want) el.className = want;
+  el.title = (rec.live ? '最新已收盘的 5 分钟 K 线「下跌」触及 5 分钟布林中轨'
+                       : '最近曾「下跌」触及 5 分钟布林中轨') + ' \u00b7 ' + rec.t;
+}
+
+async function midBandScan() {
+  if (midScanBusy) return;
+  // 「成交额前 20」剪枝：掉出前 20 一律剔除（数据未就绪时不剪枝）
+  const outCut = pruneToTop20(watchSet,
+                              code => { watchSet.delete(code); delete watchEntry[code];
+                                        feedPush(code, 'out', '掉出成交额前20'); });
+  if (outCut) { outDropCount += outCut; persistWatch(); renderAutoInfo(); }
+  // 顺带清掉已移出自选的记录
+  midTouch.forEach((v, code) => { if (!watchSet.has(code)) midTouch.delete(code); });
+  watchStrong.forEach((v, code) => { if (!watchSet.has(code)) watchStrong.delete(code); });
+  const codes = Array.from(watchSet);
+  if (!codes.length) { scheduleRender(); return; }
+  midScanBusy = true;
+  try {
+    // dayLowBreak 需要当天全部 K 线；恒用 LOD_TAIL；中轨只是顺便多读几个字段，载荷可接受
+    const res = await fetch('/api/klines?codes=' + codes.join(',') + '&tail=' + LOD_TAIL,
+                            { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const map = await res.json();
+    const lodOn = autoWatchOn();    // 「自动监控」勾选才执行剔除
+    let riseDrop = 0, lowDrop = 0;
+    codes.forEach(code => {
+      const d = map && map[code];
+      if (!d || d.error || !d.kline) return;
+      watchStrong.set(code, strongDownCount(d));     // 排序依据：这段连跌里跌超 0.25% 的根数
+      // 中轨标记
+      const mtRec = recentDropToMid(d);
+      if (mtRec) {
+        midTouch.set(code, mtRec);
+      } else {
+        const old = midTouch.get(code);
+        if (old && old.live) midTouch.set(code, { t: old.t, live: false });
+      }
+      if (lodOn && watchSet.has(code)) {
+        // 剔除①「涨破」（优先）：自选期间出现过任一根上涨 K 线 → 立刻剔除
+        const rr = hasRisenSince(d, watchEntry[code]);
+        if (rr) {
+          watchSet.delete(code); delete watchEntry[code]; riseDrop++;
+          feedPush(code, 'out', '涨破｜' + hmOf(rr.at) + ' 收 ' + rr.c.toFixed(3)
+                               + ' > 前收 ' + rr.p.toFixed(3));
+        } else {
+          // 剔除②「破位」：入池之后（且 10:15 后）的「下跌」K 线，最低价跌破【入池时的日内低点】
+          const lb = dayLowBreak(d, watchEntry[code]);
+          if (lb) {
+            watchSet.delete(code); delete watchEntry[code]; lowDrop++;
+            feedPush(code, 'out', '破位｜' + hmOf(lb.at) + ' 低 ' + lb.low.toFixed(3)
+                                 + ' ≤ 入池基准 ' + lb.base.toFixed(3));
+          }
+        }
+      }
+    });
+    if (riseDrop || lowDrop) {
+      riseDropCount += riseDrop; lodDropCount += lowDrop;
+      persistWatch(); renderAutoInfo();
+    }
+    scheduleRender();
+  } catch (e) {
+    console.error('midBandScan failed', e);
+  } finally {
+    midScanBusy = false;
+  }
+}
+let midTimer = null;
+function startMidScan() {
+  if (midTimer) clearInterval(midTimer);
+  midTimer = setInterval(midBandScan, MID_WIN);
+}
+
+// ==================== 自动盯盘 ====================
+// ① 扫描成交额前20：一段连续下跌里只要有 2 根跌超 0.25% → 自动加自选
+// ② 监控自选池：从入选取样点起，出现过任一根「涨」的5分钟K线 → 立刻剔除
+//    （自选只允许连续下跌的债，中途绝不允许出现一根上涨）
+const AUTO_TH = 0.0025;          // 每根跌幅阈值 0.25%
+const AUTO_WIN = 10000;          // 10 秒（与行情刷新、剔除扫描对齐）
+const AUTO_RUN = 2;              // 一段连续下跌里，至少要有 N 根「跌幅超过阈值」
+const SCAN_TAIL = 16;            // 扫描只需尾部少量K线（压缩批量接口载荷）
+
+// 入选判定（2026-09-23 老大重新定义：更清晰，也更宽）：
+//   ① 从最新一根【已收盘】K 线往前，一路【不许出现上涨】（每根收 ≤ 前一根收）；
+//      走平(c == p)不算中断，**只有「上涨」(c > p) 才中断**，中断之前的都不算。
+//   ② 在这段连续下跌里，只要有 AUTO_RUN(2) 根的单根跌幅超过 AUTO_TH(0.25%) 即入选
+//      —— 不要求那 2 根是「紧挨着的最新两根」，中间夹着跌幅不足 0.25% 的下跌根也算。
+//   例：… −0.30% / −0.10% / −0.40%（三根都在跌）→ 其中 2 根超 0.25% → 入选。
+//   对比旧版：旧版要求【最新两根】各自都跌超 0.25%，上面这个例子会被漏掉。
+// 从最新一根【已收盘】K 线往前，这段「一路不出现上涨」里有多少根单根跌幅超过 0.25%。
+// 既用于入池判据（≥ AUTO_RUN 即入池），也作为「5下跌」列表的排序依据（越多越靠前）。
+function strongDownCount(d) {
+  const k = d && d.kline;
+  if (!k) return 0;
+  const end = lastClosedIdx(d);                // 只用已收盘的 K 线
+  if (end < 1) return 0;                       // 至少要 2 根才比得出涨跌
+  let strong = 0;
+  for (let i = end; i > 0; i--) {
+    const c = k[i][1], p = k[i - 1][1];
+    if (c > p) break;                          // 出现「上涨」→ 中断；走平(c==p)不中断（2026-09-23 老大定）
+    if ((c - p) / p < -AUTO_TH) strong++;      // 这根跌超 0.25%
+  }
+  return strong;
+}
+
+function checkDownTrend(d) {
+  return strongDownCount(d) >= AUTO_RUN;
+}
+// 浏览器当前时间 → 与 K 线时间同格式（手动加入自选时的「入选取样点」）
+function nowBarStr() {
+  const d = new Date(), p = x => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+       + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':00';
+}
+
+// 「涨破」判定：从入选取样点(entry)【本身】开始，只要任一根 5 分钟 K 线 收 > 前一根收（=涨/红），
+// 就必须剔除。自选只允许「连续下跌」的债，中途绝不允许出现一根上涨。
+// 取样点那一根也参与判定：入选时它还在走，它的收盘发生在入选【之后】，
+// 所以它收成「涨」同样要剔（2026-09-21 老大定；旧代码 start=found+1 把它自己排除了）。
+// entry 缺失或跨天 → 视为当天全程都须连续下跌（兼容历史遗留自选）。
+function hasRisenSince(d, entry) {
+  const k = d && d.kline, ts = d && d.times;
+  if (!k || !ts || k.length < 2) return null;
+  const end = lastClosedIdx(d);                    // 未收盘的那根不参与判断
+  if (end < 1) return null;
+  const lastDay = dayOf(ts[k.length - 1]);
+  let start = 1;                                   // 默认：当天全段
+  if (entry && dayOf(entry) === lastDay) {
+    let found = -1;
+    for (let i = 0; i <= end; i++) {
+      if (String(ts[i]) === String(entry)) { found = i; break; }
+    }
+    if (found >= 0) {
+      start = found;                           // 取样点那一根自己也要判（它收盘在入选之后）
+    } else if (String(entry) > String(ts[end])) {
+      // 取样点是「正在走的那根」的标签（自动入池），或手动加入时的墙钟时间：
+      // 判定区间 0..end 里还没有任何一根属于「入选之后」→ 本轮不判。
+      // （旧代码在这里退回 start=1 全段，导致当天只要有过一根涨就【秒剔】——池子永远空的根因）
+      start = end + 1;
+    } else {
+      start = 1;                               // 取样点更早且已滚出窗口 → 退回全段
+    }
+  }
+  for (let i = Math.max(1, start); i <= end; i++) {
+    if (dayOf(ts[i]) !== lastDay) continue;
+    // 严格比较【原始收盘价】，不加任何容差：哪怕只高 0.001 元（显示上会变成 0.00%）也算「涨」
+    if (k[i][1] > k[i - 1][1]) {                   // 出现「涨」→ 剔除
+      return { at: ts[i], c: k[i][1], p: k[i - 1][1] };
+    }
+  }
+  return null;
+}
+
+async function autoWatchScan() {
+  const cb = $('autoWatch');
+  if (!cb || !cb.checked) return;
+  if (!allRows.length) return;
+
+  // 前20 + 自选池 去重合并，一次批量请求拿全部K线（原先是 20+ 次单独请求）
+  const top20 = top20Codes();
+  const codes = uniqCodes(top20, watchSet);
+  if (!codes.length) return;
+
+  let added = 0, removed = 0, errMsg = '';
+  try {
+    const res = await fetch('/api/klines?codes=' + codes.join(',') + '&tail=' + LOD_TAIL,
+                            { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const map = await res.json();
+
+    for (let i = 0; i < top20.length; i++) {
+      const code = top20[i];
+      const d = map && map[code];
+      if (!d || d.error || !d.kline || d.kline.length < 3) continue;
+      // 入池只看「连跌」本身；破位(10:15 后摸当天最低)不作为入池门槛，
+      // 只在入池后由剔除规则处理（老大 2026-09-17 明确：破位只用于剔除，不用于拦入池）
+      // 已公布强赎的债不收（老大 2026-09-23）
+      if (checkDownTrend(d) && !watchSet.has(code) && !redeemSet.has(code)) {
+        watchSet.add(code);
+        watchEntry[code] = String(d.times[d.times.length - 1]);   // 记录入选取样点
+        added++;
+        feedPush(code, 'in', '连跌 ' + strongDownCount(d) + ' 根达标');
+      }
+    }
+    // 用快照遍历，避免遍历过程中删除元素
+    Array.from(watchSet).forEach(code => {
+      const d = map && map[code];
+      if (!d || d.error || !d.kline || d.kline.length < 3) return;
+      if (redeemSet.has(code)) {
+        watchSet.delete(code); delete watchEntry[code]; removed++;
+        feedPush(code, 'out', '已公布强赎'); return;
+      }
+      const rr2 = hasRisenSince(d, watchEntry[code]);
+      if (rr2) {
+        watchSet.delete(code); delete watchEntry[code]; removed++;
+        feedPush(code, 'out', '涨破｜' + hmOf(rr2.at) + ' 收 ' + rr2.c.toFixed(3)
+                             + ' > 前收 ' + rr2.p.toFixed(3));
+      }
+    });
+  } catch (e) {
+    errMsg = e.message;
+    console.error('autoWatchScan failed', e);
+  }
+
+  if (added || removed) { persistWatch(); scheduleRender(); }
+  midBandScan();      // 自选池变动后顺带刷新中轨触及状态
+
+  lastScanHM = hhmmNow();
+  if (errMsg) {
+    lastScanMsg = ' \u00b7 \u626b\u63cf\u5931\u8d25';
+  } else if (!added && !removed) {
+    lastScanMsg = ' \u00b7 \u65e0\u53d8\u52a8';
+  } else {
+    lastScanMsg = (added ? ' \u00b7 \u65b0\u52a0 ' + added + ' \u53ea' : '')
+                + (removed ? ' \u00b7 \u79fb\u9664 ' + removed + ' \u53ea' : '');
+  }
+  renderAutoInfo();
+}
+
+// ==================== 60下跌 自选池 ====================
+// 池内成员 = 「最新一根 60 分钟 K 线跌幅 ≥ 1.9%」
+//           且 「当天没碰过布林中轨、也没跌到中轨下方」
+//           且 「当天除第一根外，没有『下跌的 60 分钟 K 线』碰到当天最高价」——三条都是实时条件，逐分钟复核。
+// 注意：这一池**不等 K 线收盘**（正在走的那根也算，所以盘中会实时变化）；
+//       5 分钟那套仍然只认已收盘的 K 线，两者口径不同，别混。
+const W60_DROP = 0.019;          // 1.9%
+const W60_WIN  = 60000;          // 每 1 分钟刷新一轮
+const W60_TAIL = 64;             // 取 64 根 60 分钟（约 16 个交易日），够算 MA20
+const W60_HH_EPS = 0.0005;       // 「触到当天最高价」的容差 0.05%（吸收擦边与浮点误差）
+let w60Busy = false;
+
+// 最新一根 60 分钟 K 线的涨跌幅（小数）——「60下跌」不等收盘，正在走的那根也算；数据不足返回 null
+function chg60(d) {
+  const k = d && d.kline;
+  if (!k || k.length < 2) return null;
+  const i = k.length - 1;                 // 含正在走的那根
+  const c = k[i][1], p = k[i - 1][1];
+  if (!p) return null;
+  return c / p - 1;
+}
+
+// 当天是否有任一根 60 分钟 K 线【碰到过布林中轨、或位于中轨下方】（不等收盘，含正在走的那根）
+// 判据：该根最低价 <= 中轨。它同时覆盖两种情况：
+//   ① 碰到中轨：最低 ≤ 中轨 ≤ 最高
+//   ② 整根都在中轨下方：最高 < 中轨（此时最低必然 < 中轨，但并【不】满足"碰到"）
+// 2026-09-23 老大要求把 ② 也算作剔除条件。
+function touchedMid60Today(d) {
+  const k = d && d.kline, ts = d && d.times, b = d && d.boll;
+  if (!k || !ts || !b || !b.mid) return false;
+  const lastDay = dayOf(ts[k.length - 1]);
+  for (let i = 0; i < k.length; i++) {
+    if (dayOf(ts[i]) !== lastDay) continue;
+    const mid = b.mid[i];
+    if (mid == null) continue;
+    if (k[i][2] <= mid) return true;      // 最低价 ≤ 中轨 =「碰到中轨」或「已跌到中轨下方」
+  }
+  return false;
+}
+
+// 当天（**除第一根 60 分钟 K 线外**）是否存在「下跌 且 碰到当天最高价」的那根
+//   判据：该根 收 < 前一根收（下跌）且 最高价 >= 当天最高价 ×(1-容差)。
+//   「当天最高价」= 当天所有 60 分钟 K 线最高价的最大值（**含第一根**）。
+//   为什么排除第一根：当天第一根（10:30）往往就是当天最高点的来源，若把它算进来，
+//   几乎每只债都会被判"触及当天最高价"而全被挡掉。2026-09-23 老大定。
+function hitDayHigh60Today(d) {
+  const k = d && d.kline, ts = d && d.times;
+  if (!k || !ts || k.length < 2) return false;
+  const lastDay = dayOf(ts[k.length - 1]);
+  let first = -1, dayHigh = -Infinity;
+  for (let i = 0; i < k.length; i++) {
+    if (dayOf(ts[i]) !== lastDay) continue;
+    if (first < 0) first = i;                     // 当天第一根
+    const hi = k[i][3];
+    if (typeof hi === 'number' && hi > dayHigh) dayHigh = hi;
+  }
+  if (first < 0 || !isFinite(dayHigh)) return false;
+  for (let i = first + 1; i < k.length; i++) {    // 从当天第二根起
+    if (dayOf(ts[i]) !== lastDay) continue;
+    const c = k[i][1], p = k[i - 1][1];
+    if (!(c < p)) continue;                       // 只看「下跌」的那根
+    const hi = k[i][3];
+    if (typeof hi === 'number' && hi >= dayHigh * (1 - W60_HH_EPS)) return true;
+  }
+  return false;
+}
+
+async function scan60Watch() {
+  if (w60Busy) return;
+  if (!allRows.length) return;
+  const top20 = top20Codes();
+  const codes = uniqCodes(top20, watch60);
+  if (!codes.length) return;
+  w60Busy = true;
+  let added = 0, removed = 0, err = '';
+  try {
+    const res = await fetch('/api/klines60?codes=' + codes.join(',') + '&tail=' + W60_TAIL,
+                            { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const map = await res.json();
+    const info = {};
+    codes.forEach(code => {
+      const d = map && map[code];
+      if (!d || d.error || !d.kline || d.kline.length < 2) return;
+      info[code] = { chg: chg60(d), mid: touchedMid60Today(d), hh: hitDayHigh60Today(d),
+                      rd: redeemSet.has(code) };
+    });
+    w60Info = new Map(Object.keys(info).map(k => [k, info[k]]));
+    // ①-a 掉出「成交额前 20」→ 直接剔除
+    removed += pruneToTop20(watch60, code => watch60.delete(code));
+    // ①-b 当天碰过 60 分钟中轨 / 跌到中轨下方、当天有下跌 K 线触及最高价、
+    //      或跌幅已收窄到 1.9% 以内（实时条件不再满足）
+    Array.from(watch60).forEach(code => {
+      const it = info[code];
+      if (!it) return;                                   // 拿不到数据 → 先不动
+      if (it.rd)  { watch60.delete(code); removed++; return; }   // 已公布强赎
+      if (it.mid) { watch60.delete(code); removed++; return; }
+      if (it.hh)  { watch60.delete(code); removed++; return; }
+      if (it.chg != null && it.chg > -W60_DROP) { watch60.delete(code); removed++; }
+    });
+    // ② 再入池：60 分钟跌超 1.9%、当天没碰过中轨也没到中轨下方、且没有下跌 K 线触及当天最高价
+    top20.forEach(code => {
+      const it = info[code];
+      if (!it || it.chg == null) return;
+      if (it.chg <= -W60_DROP && !it.mid && !it.hh && !it.rd && !watch60.has(code)) {
+        watch60.add(code); added++;
+      }
+    });
+    if (added || removed) { persistWatch60(); scheduleRender(); }
+    else scheduleRender();
+  } catch (e) {
+    err = e.message;
+    console.error('scan60Watch failed', e);
+  }
+  w60Busy = false;
+  const el = $('w60Info');
+  if (el) {
+    el.textContent = (err ? '扫描失败' : '上次 ' + hhmmNow())
+      + (added ? ' · 新加 ' + added : '') + (removed ? ' · 剔除 ' + removed : '')
+      + (marketClosed() ? ' · 已收盘，自动复核已暂停' : '');
+  }
+}
+// ==================== 定时器 ====================
+// 收盘后 K 线不再变化，扫描结果永远不会变 —— 只会让「入池 → 立刻剔除」每 10 秒空转一次、
+// 把流水刷满（2026-09-24 岱美/联瑞：入池与剔除判定同时恒为真，无限循环）。
+// 所以【收盘后自动暂停扫描】；两个池的「立即」按钮不受影响，仍可手动跑一次。
+// 市场状态取自行情接口（lastMarket，由 load() 写入）。
+function marketClosed() { return lastMarket === '已收盘' || lastMarket === '休市'; }
+
+// 暂停时的状态提示（两个池的状态栏各写各的）
+function renderPausedStatus() {
+  const a = $('autoInfo');
+  if (a) a.textContent = '已收盘 · 自动扫描已暂停（点「立即扫描」可手动跑一次）';
+  const b = $('w60Info');
+  if (b) b.textContent = '已收盘 · 自动复核已暂停（点「立即复核」可手动跑一次）';
+}
+
+// 等首屏行情到位先跑一次（最多重试 6 次），随后按 ms 周期重复
+function scheduleLoop(fn, ms) {
+  let tries = 0;
+  const run = () => {
+    if (marketClosed()) { renderPausedStatus(); return; }   // 收盘后：空转无意义，直接跳过
+    fn();
+  };
+  const boot = () => {
+    if (allRows.length) { run(); return; }
+    if (++tries < 6) setTimeout(boot, 2500);
+  };
+  setTimeout(boot, 2500);
+  return setInterval(run, ms);
+}
+
+let w60Timer = null;
+function startScan60() {
+  if (w60Timer) clearInterval(w60Timer);
+  w60Timer = scheduleLoop(scan60Watch, W60_WIN);
+}
+
+let autoTimer = null;
+function startAutoWatch() {
+  if (autoTimer) clearInterval(autoTimer);
+  autoTimer = scheduleLoop(autoWatchScan, AUTO_WIN);
+}
+let timer = null;
+function applySchedule() {
+  if (timer) { clearInterval(timer); timer = null; }
+  if (refreshSec > 0) timer = setInterval(load, refreshSec * 1000);
+}
+
+// ==================== 启动 ====================
+$('refreshSel').value = String(refreshSec);
+$('refreshSel').addEventListener('change', () => {
+  refreshSec = parseInt($('refreshSel').value, 10);
+  localStorage.setItem(LS_KEY, String(refreshSec));
+  applySchedule();
+  if (refreshSec > 0) load();   // 切换后立即刷一次
+});
+$('manualBtn').addEventListener('click', load);
+$('autoScan').addEventListener('click', () => { autoWatchScan(); midBandScan(); });
+$('w60Scan').addEventListener('click', () => scan60Watch());
+setTfButtons();
+$('tfSeg').addEventListener('click', (ev) => {
+  const b = ev.target.closest('.tf-btn');
+  if (!b) return;
+  curTf = b.dataset.tf;
+  try { localStorage.setItem(LS_TF, curTf); } catch (e) {}
+  setTfButtons();
+  if (curCode) loadKline(curCode, null, true);
+});
+$('w60Clear').addEventListener('click', () => {
+  if (!watch60.size) return;
+  watch60.clear();
+  persistWatch60();
+  render60();
+});
+$('watch60List').addEventListener('click', (ev) => {
+  const rm = ev.target.closest('.watch-rm');
+  if (rm) {
+    watch60.delete(rm.dataset.code);
+    persistWatch60();
+    render60();
+    return;
+  }
+  const main = ev.target.closest('.wi-main');
+  if (main) loadKline(main.dataset.code, null, true, '60m');  // 「60下跌」→ 60 分钟图
+});
+
+$('feedClear').addEventListener('click', () => {
+  feedLog = [];
+  try { localStorage.removeItem(LS_FEED); } catch (e) {}
+  renderFeed();
+});
+try { renderFeed(); } catch (e) { console.error('renderFeed failed', e); }
+try { applySchedule(); } catch (e) { console.error('applySchedule failed', e); }
+try { startAutoWatch(); } catch (e) { console.error('startAutoWatch failed', e); }
+try { startMidScan(); } catch (e) { console.error('startMidScan failed', e); }
+try { startScan60(); } catch (e) { console.error('startScan60 failed', e); }
+load();
+try { if (!marketClosed() && watchSet.size) midBandScan(); } catch (e) { console.error('midBandScan failed', e); }
+// 恢复上次选中的转债
+try { if (curCode) loadKline(curCode); } catch (e) { console.error('restore kline failed', e); }
+</script>
+</body>
+</html>
