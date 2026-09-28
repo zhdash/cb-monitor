@@ -1913,14 +1913,33 @@ async function scan60Watch() {
 // 把流水刷满（2026-09-24 岱美/联瑞：入池与剔除判定同时恒为真，无限循环）。
 // 所以【收盘后自动暂停扫描】；两个池的「立即」按钮不受影响，仍可手动跑一次。
 // 市场状态取自行情接口（lastMarket，由 load() 写入）。
-function marketClosed() { return lastMarket === '已收盘' || lastMarket === '休市'; }
+// ==================== 交易时段判断（2026-09-28 老大要求）====================
+// ⭐ 只在【交易时段】自动刷新；非交易时段**不发任何请求**（定时器只做"到点检测"）。
+// 依据（双保险）：
+//   ① 本地时钟 —— 周一~周五，09:15~11:30（含集合竞价）与 13:00~15:01；
+//      收盘多留 1 分钟，确保 15:00 那根 K 线能取到。
+//   ② 行情状态 lastMarket —— 为「休市」时即使时钟在时段内也不刷（覆盖法定节假日）。
+//     ⚠️ 不能只靠 ②：非交易时段不请求就拿不到最新的 lastMarket，必须靠时钟兜底。
+const SESSIONS = [[9 * 60 + 15, 11 * 60 + 30], [13 * 60, 15 * 60 + 1]];
+function inTradingSession(now) {
+  const d = now || new Date();
+  const wd = d.getDay();
+  if (wd === 0 || wd === 6) return false;                       // 周六 / 周日
+  const hm = d.getHours() * 60 + d.getMinutes();
+  return SESSIONS.some(function (s) { return hm >= s[0] && hm <= s[1]; });
+}
+// 允许自动刷新/自动扫描的条件：时钟在交易时段内，且行情未明确报「休市」
+function canAutoRefresh() { return inTradingSession() && lastMarket !== '休市'; }
+
+function marketClosed() { return !canAutoRefresh(); }
 
 // 暂停时的状态提示（两个池的状态栏各写各的）
 function renderPausedStatus() {
+  const why = inTradingSession() ? '休市' : '非交易时段';
   const a = $('autoInfo');
-  if (a) a.textContent = '已收盘 · 自动扫描已暂停（点「立即扫描」可手动跑一次）';
+  if (a) a.textContent = why + ' · 自动刷新与扫描已暂停（点「立即扫描」可手动跑一次）';
   const b = $('w60Info');
-  if (b) b.textContent = '已收盘 · 自动复核已暂停（点「立即复核」可手动跑一次）';
+  if (b) b.textContent = why + ' · 自动刷新与复核已暂停（点「立即复核」可手动跑一次）';
 }
 
 // 等首屏行情到位先跑一次（最多重试 6 次），随后按 ms 周期重复
@@ -1952,7 +1971,15 @@ function startAutoWatch() {
 let timer = null;
 function applySchedule() {
   if (timer) { clearInterval(timer); timer = null; }
-  if (refreshSec > 0) timer = setInterval(load, refreshSec * 1000);
+  if (refreshSec > 0) {
+    // ⭐ 仅在【交易时段】真正发请求（2026-09-28 老大要求）。
+    //    非交易时段定时器照常到点唤醒，但只做一次本地时钟判断就返回 —— 不产生任何网络请求；
+    //    开盘时间一到（时钟走进交易日 09:15）自动恢复，不需要手动操作。
+    timer = setInterval(function () {
+      if (!canAutoRefresh()) { renderPausedStatus(); return; }
+      load();
+    }, refreshSec * 1000);
+  }
 }
 
 // ==================== 启动 ====================
