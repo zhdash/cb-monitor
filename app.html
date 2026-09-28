@@ -1474,11 +1474,12 @@ const MID_TAIL = 8;              // 判定只需最后几根，压缩载荷
 const MID_WIN = 10000;           // 每 10 秒核对一次（自选池：涨破 + 破位 + 中轨 合并一次遍历）
 let midTouch = new Map();        // code -> {t:'HH:MM', live:bool}；live=false 表示"曾触及"
 let midScanBusy = false;
-// ⭐ 自动入池冷却：某只债刚被自动剔除后，冷却期内不再自动入池。
-//    防止「入池 → 立刻被剔 → 又入池」的循环 —— 破位改为实时判定后尤其容易发生
-//    （2026-09-28 欧通转债 123241 每 10 秒刷一轮流水）。
-const AUTO_DROP_COOLDOWN = 60000;   // 冷却 60 秒
-let autoDropBlock = new Map();      // code -> 解禁时间戳(ms)
+// ⭐ 自动入池的「等待上涨」闸门：某只债被自动剔除后，必须等它先出现一根【上涨】的
+//    5 分钟 K 线，才允许重新入池（2026-09-28 老大定：
+//    「必须等其有一个上涨 5 分钟 K 线，后面再判断后面 5 分钟 K 线的下跌」）。
+//    既防「入池 → 立刻被剔 → 又入池」的循环，也符合行情语义：这一波下跌走完了再重新看。
+//    ⛔ 别退回"固定冷却秒数" —— 那会在它还在跌的时候把它放回来。
+let autoDropWait = new Map();   // code -> 剔除时那一根的标签（等它之后出现「上涨」才解禁）
 
 // 自动盯盘状态栏：扫描结果 + 破位剔除累计（两处扫描共用同一处文案，避免互相覆盖）
 let lastScanHM = '', lastScanMsg = '', lodDropCount = 0, riseDropCount = 0, outDropCount = 0;
@@ -1592,7 +1593,7 @@ async function midBandScan() {
         const rr = hasRisenSince(d, watchEntry[code]);
         if (rr) {
           watchSet.delete(code); delete watchEntry[code]; riseDrop++;
-          autoDropBlock.set(code, Date.now() + AUTO_DROP_COOLDOWN);   // 冷却：别马上再入池
+          autoDropWait.set(code, String(d.times[d.times.length - 1]));   // 等一根「上涨」才让回来
           feedPush(code, 'out', '涨破｜' + hmOf(rr.at) + ' 收 ' + rr.c.toFixed(3)
                                + ' > 前收 ' + rr.p.toFixed(3));
         } else {
@@ -1600,7 +1601,7 @@ async function midBandScan() {
           const lb = dayLowBreak(d, watchEntry[code]);
           if (lb) {
             watchSet.delete(code); delete watchEntry[code]; lowDrop++;
-            autoDropBlock.set(code, Date.now() + AUTO_DROP_COOLDOWN); // 冷却：别马上再入池
+            autoDropWait.set(code, String(d.times[d.times.length - 1]));   // 等一根「上涨」才让回来
             feedPush(code, 'out', '破位｜' + hmOf(lb.at) + ' 低 ' + lb.low.toFixed(3)
                                  + ' ≤ 入池基准 ' + lb.base.toFixed(3));
           }
@@ -1724,8 +1725,6 @@ async function autoWatchScan() {
   if (!codes.length) return;
 
   let added = 0, removed = 0, errMsg = '';
-  const nowMs = Date.now();
-  autoDropBlock.forEach((t, c) => { if (t <= nowMs) autoDropBlock.delete(c); });   // 清掉过期的冷却
   try {
     const res = await fetch('/api/klines?codes=' + codes.join(',') + '&tail=' + LOD_TAIL,
                             { cache: 'no-store' });
@@ -1739,8 +1738,13 @@ async function autoWatchScan() {
       // 入池只看「连跌」本身；破位(10:15 后摸当天最低)不作为入池门槛，
       // 只在入池后由剔除规则处理（老大 2026-09-17 明确：破位只用于剔除，不用于拦入池）
       // 已公布强赎的债不收（老大 2026-09-23）
-      if (checkDownTrend(d) && !watchSet.has(code) && !redeemSet.has(code)
-          && !(autoDropBlock.get(code) > Date.now())) {   // ⭐ 刚被自动剔过 → 冷却期内不再入池
+      // ⭐ 刚被自动剔除的债：必须等它先走出【一根上涨的 5 分钟 K 线】才允许重新入池
+      //    —— 老大 2026-09-28：「必须等其有一个上涨 5 分钟 K 线，后面再判断后面 5 分钟 K 线的下跌」
+      if (autoDropWait.has(code)) {
+        if (hasRisenSince(d, autoDropWait.get(code))) autoDropWait.delete(code);   // 已经涨过 → 解禁
+        else continue;                                                             // 还在跌 → 本轮不入池
+      }
+      if (checkDownTrend(d) && !watchSet.has(code) && !redeemSet.has(code)) {
         watchSet.add(code);
         watchEntry[code] = String(d.times[d.times.length - 1]);   // 记录入选取样点
         added++;
