@@ -1413,17 +1413,18 @@ function dayLowBreak(d, entry) {
   const k = d && d.kline, ts = d && d.times;
   if (!k || !ts || k.length < 4) return null;
   const n = k.length;
-  const end = lastClosedIdx(d);                                // 只用已收盘的 K 线
-  if (end < 1) return null;                                    // 已收盘样本不足 → 不判定
-  const lastDay = dayOf(ts[n - 1]);              // 「当天」= 最新 K 线所属日
-  if (hmOf(ts[n - 1]) < LOD_START) return null;                // 尚未到 10:15 → 不判定
+  const last = n - 1;                          // ⭐ 最新一根（可能还在走）
+  const end = lastClosedIdx(d);                // 已收盘的最后一根 —— 只用来算基准
+  if (end < 1) return null;                    // 已收盘样本不足 → 不判定
+  const lastDay = dayOf(ts[last]);             // 「当天」= 最新 K 线所属日
+  if (hmOf(ts[last]) < LOD_START) return null; // 尚未到 10:15 → 不判定
 
   // 定位「入池取样点」：精确匹配（它已收盘）取它自己；匹配不到（取样点是「正在走那根」的
   // 标签，或手动加入时的墙钟时间）则退化为「≤ entry 时刻的最后一根已收盘 K 线」
   let ei = -1, exact = false;
   if (entry) {
-    for (let i = 0; i <= end; i++) { if (String(ts[i]) === String(entry)) { ei = i; exact = true; break; } }
-    if (ei < 0) { for (let i = end; i >= 0; i--) { if (String(ts[i]) <= String(entry)) { ei = i; break; } } }
+    for (let i = 0; i <= last; i++) { if (String(ts[i]) === String(entry)) { ei = i; exact = true; break; } }
+    if (ei < 0) { for (let i = last; i >= 0; i--) { if (String(ts[i]) <= String(entry)) { ei = i; break; } } }
   }
   // 定位不到当日的入池点 → 不判定（宁可漏剔，也不误剔）
   if (ei < 0 || dayOf(ts[ei]) !== lastDay) return null;
@@ -1432,7 +1433,8 @@ function dayLowBreak(d, entry) {
   // ⚠️ 精确匹配时【不含 ei 那根】：它在入池时还在走，其 low 会在入池后继续下探；
   //    若把它算进来，基准会被"未来数据"追低 → 之后再怎么跌都碰不到基准，永远不剔。
   //    （欧通转债 123241：13:55 入池、取样点标签 14:00，14:00 收盘 low=908.847 变成基准 → 死锁）
-  const baseEnd = exact ? ei - 1 : ei;
+  // ⭐ 基准【只用已收盘的 K 线】（上限再收 end）：正在走的那根 low 还会继续下探，不能拿它定基准。
+  const baseEnd = Math.min(exact ? ei - 1 : ei, end);
   let base = Infinity;
   for (let i = 0; i <= baseEnd; i++) {
     if (dayOf(ts[i]) !== lastDay) continue;
@@ -1441,10 +1443,12 @@ function dayLowBreak(d, entry) {
   }
   if (!isFinite(base)) return null;
 
-  // 检查范围：取样点那根【自身】（精确匹配时它的收盘发生在入池之后）→ 直到最后一根已收盘；
-  //           且只看 10:15 之后。跌破基准 → 剔除。
+  // 检查范围：取样点那根【自身】→ 直到【最新一根】（⭐ 含正在走的那根）。
+  // ⭐ 老大 2026-09-28：下跌的 5 分钟 K 线只要在 10:15 后摸到新低就要剔除，**不必等它收盘**。
+  //    腾讯 m5 的末根就是"正在走的那根"（标签 = 它的收盘时刻，盘中实时更新）→ 天然支持实时判定。
+  //    仍只认「下跌」的那根，且只认【最低价】跌破，不要求收盘价也在新低。
   const start = exact ? ei : ei + 1;
-  for (let i = start; i <= end; i++) {
+  for (let i = start; i <= last; i++) {
     if (dayOf(ts[i]) !== lastDay) continue;
     if (hmOf(ts[i]) < LOD_START) continue;     // 只看 10:15 之后
     // 只认「下跌」的那根（收 < 前一根收）；上涨/走平那根即使最低价创新低，也不算破位。
