@@ -29,6 +29,21 @@
   }
   .wrap{max-width:1560px;margin:0 auto}
 
+  /* ---------- 响应式基线：防溢出 / 防 iOS 自动放大 / 安全区 ---------- */
+  html{-webkit-text-size-adjust:100%}          /* 防 iOS 横屏自动放大正文字号 */
+  img,svg,canvas,video{max-width:100%;height:auto}
+  body{
+    padding-left:max(22px,env(safe-area-inset-left));
+    padding-right:max(22px,env(safe-area-inset-right));
+    padding-bottom:max(44px,env(safe-area-inset-bottom));
+  }
+  /* 所有可能被长内容撑破的 flex 子项都必须允许收缩 */
+  .brand,.chips,.card-hd .t,.chart-hd-right,.toolbar,.watch-auto,.wi-name{min-width:0}
+  .toolbar input[type=text]{min-width:0}
+  /* 触控最小高度基线（桌面端偏紧凑，触屏另有放大规则） */
+  .btn,#refreshSel{min-height:32px}
+  .kbtn{min-height:26px}
+
   /* ---------- 顶栏 ---------- */
   header{
     position:sticky;top:0;z-index:30;
@@ -116,7 +131,7 @@
   .toolbar .cnt{font-size:12px;color:var(--text-3);white-space:nowrap;margin-left:auto}
 
   /* ---------- 表格 ---------- */
-  .tbl-scroll{overflow-y:auto;max-height:640px;flex:1}
+  .tbl-scroll{overflow:auto;max-height:640px;flex:1;-webkit-overflow-scrolling:touch}
   table{width:100%;border-collapse:collapse;font-size:13px}
   thead th{
     position:sticky;top:0;z-index:2;background:#fbfcfe;color:var(--text-3);
@@ -252,6 +267,17 @@
   ::-webkit-scrollbar-thumb:hover{background:#b9c1cc}
   ::-webkit-scrollbar-track{background:transparent}
 
+  /* ==================== 断点阶梯 ====================
+     ≥1241  三列并排
+     ≤1240  换行：表格通栏 / 两池并排 / 图表通栏
+     ≤1024  平板（3 列概览、限高）
+     ≤900   两池改为上下堆叠、概览两列
+     ≤768   手机横屏 / 大屏手机：顶栏压扁 + 状态条横向可滑、放大触控区、表单 16px 防 iOS 放大
+     ≤560   常见手机竖屏：去掉成交量与正股小标
+     ≤400   小屏手机：再去掉现价
+     另加两组补丁：触屏设备（hover:none）、手机横屏低高度（orientation:landscape）
+     原则：只「隐藏/缩小/换行」，不改 DOM 结构 —— 表格行的 refs 是按 children 下标取的。 */
+
   @media (max-width:1240px){
     .main{flex-wrap:wrap}
     .card-table{flex:1 1 100%}
@@ -259,18 +285,134 @@
     .card-watch,.card-watch60{flex:1 1 50%;min-height:240px}
     .card-chart{flex:1 1 100%}
   }
+
+  @media (max-width:1024px){
+    .stats{grid-template-columns:repeat(3,1fr)}
+    .tbl-scroll{max-height:min(62vh,520px)}
+    .watch-col .watch-list{max-height:min(52vh,300px)}
+  }
+
   @media (max-width:900px){
     .stats{grid-template-columns:repeat(2,1fr)}
     .watch-col{flex-wrap:wrap}
-    .card-watch,.card-watch60{flex:1 1 100%;min-height:220px}
-    .card-chart{flex:1 1 100%}
-    .tbl-scroll{max-height:460px}
-    .watch-list{max-height:300px}
+    .card-watch,.card-watch60{flex:1 1 100%;min-height:0}
+    .tbl-scroll{max-height:min(58vh,460px)}
+    .watch-col .watch-list{max-height:min(48vh,280px)}
   }
-  @media (max-width:720px){
-    body{padding:0 10px 30px}
-    table{font-size:12px}
+
+  /* ---------- 手机（横屏 / 大屏手机）---------- */
+  @media (max-width:768px){
+    body{padding-left:max(12px,env(safe-area-inset-left));
+         padding-right:max(12px,env(safe-area-inset-right));padding-bottom:28px}
+    header{gap:10px;padding:10px 0 8px;margin-bottom:10px}
+    .brand{gap:10px}
+    .mark{width:32px;height:32px;flex:0 0 32px;border-radius:9px;font-size:15px}
+    h1{font-size:17px}
+    .sub{font-size:11px;margin-top:2px}
+    /* 状态条：不换行、横向滑动（折成三行会白吃一大截屏幕） */
+    .chips{width:100%;flex-wrap:nowrap;overflow-x:auto;gap:8px;padding-bottom:3px;
+           -webkit-overflow-scrolling:touch;scrollbar-width:none}
+    .chips::-webkit-scrollbar{display:none}
+    .chip{flex:0 0 auto;padding:6px 10px;font-size:12px}
+    /* 状态条可横向滑动，但【报错 / 立即刷新 / 刷新间隔】必须排在最前，不能被挤出屏幕外 */
+    #hint{order:-3}
+    #manualBtn{order:-2;flex:0 0 auto}          /* 必须不收缩，否则文字被压成竖排 */
+    .chips>.chip:has(#refreshSel){order:-1}
+    #hint{flex:0 0 auto}
+    /* 触控区：≥36px，桌面端更紧凑 */
+    #refreshSel,.btn{min-height:36px;padding:6px 12px;font-size:13px}
+    /* 表单字号 ≥16px，否则 iOS Safari 聚焦时会自动放大整页 */
+    .toolbar input[type=text]{font-size:16px;padding:8px 12px;max-width:none}
+    #refreshSel{font-size:14px}
+    .stats{grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:10px}
+    .stat{padding:10px 12px;gap:4px}
+    .stat .v{font-size:18px}
+    /* 卡片内边距统一 */
+    .card{border-radius:12px}
+    .card-hd{padding:11px 12px}
+    .toolbar{padding:10px 12px}
+    .watch-auto{padding:8px 12px;gap:8px}
+    .watch-list{padding:8px}
+    .auto-info{width:100%;margin-left:0}
+    /* 表格：隐藏【最高/最低】；字号与行高按手指调整 */
+    table{font-size:12.5px}
+    thead th{padding:9px 6px;font-size:11px}
+    tbody td{padding:9px 6px}
     .hide-sm{display:none}
+    .tbl-scroll{max-height:min(56vh,420px)}
+    .watch-col .watch-list{max-height:min(46vh,260px)}
+    .card-feed .feed-list{max-height:150px}
+    /* 图表 */
+    .chart-hd{padding:11px 12px 0}
+    #chart{height:320px}
+    .chart-empty{height:320px}
+    footer{font-size:11px;line-height:1.8}
+  }
+
+  /* ---------- 常见手机竖屏 ---------- */
+  @media (max-width:560px){
+    .hide-xs,.stock{display:none}              /* 成交量 + 正股代码小标 */
+    table{font-size:11.5px}
+    thead th{padding:8px 4px;font-size:10.5px}
+    tbody td{padding:8px 4px}
+    .chg-badge{min-width:0;padding:2px 6px}
+    .rank{width:18px;height:18px;line-height:18px;font-size:11px;border-radius:6px}
+    .kbtn{padding:3px 8px;font-size:10.5px}
+    .card-hd .t{font-size:13px}
+    .stat .v{font-size:17px}
+    .watch-item{padding:11px 40px 11px 12px}
+    .watch-empty{padding:28px 12px}          /* 空状态别占太多竖向空间 */
+    #chart{height:280px}
+    .chart-empty{height:280px}
+  }
+
+  /* ---------- 小屏手机（iPhone SE / 360px 级）---------- */
+  @media (max-width:400px){
+    .col-price{display:none}                   /* 现价也让位，保证不裁切 */
+    .stats{gap:8px}
+    .stat{padding:9px 10px}
+    .stat .v{font-size:16px}
+    table{font-size:11px}
+    thead th{font-size:10px}
+    footer{font-size:10.5px}
+  }
+
+  /* ---------- 极窄屏（320px 级）：再去掉排名列，保证表格不横向滚动 ---------- */
+  @media (max-width:360px){
+    .col-rank{display:none}
+    table{font-size:10.5px}
+    thead th{padding:7px 3px}
+    tbody td{padding:8px 3px}
+    .chg-badge{padding:2px 4px}
+    body{padding-left:max(8px,env(safe-area-inset-left));
+         padding-right:max(8px,env(safe-area-inset-right))}
+  }
+
+  /* ---------- 触屏设备：去掉 hover 依赖、放大点击区 ---------- */
+  @media (hover:none){
+    .watch-rm{opacity:1;width:26px;height:26px;line-height:24px;font-size:15px;right:10px;top:10px}
+    .watch-item{padding-right:46px}
+    .wchk{width:19px;height:19px}
+    #selAll{width:18px;height:18px}
+    .kbtn{min-height:32px;padding:5px 10px}
+    .tf-btn{min-height:36px;padding:6px 14px}
+    tbody td{padding-top:10px;padding-bottom:10px}
+    tbody tr:hover{background:transparent}
+    .watch-item:hover{background:transparent;border-color:transparent}
+  }
+
+  /* ---------- 手机横屏（高度紧张）：压扁数据区，尽量一屏看全 ---------- */
+  @media (orientation:landscape) and (max-height:560px){
+    header{padding:8px 0 6px;margin-bottom:8px}
+    .sub{display:none}
+    .stats{grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px}
+    .stat{padding:8px 10px}
+    .stat .v{font-size:16px}
+    .tbl-scroll{max-height:min(62vh,300px)}
+    .watch-col .watch-list{max-height:min(52vh,220px)}
+    .card-feed .feed-list{max-height:120px}
+    #chart{height:240px}
+    .chart-empty{height:240px}
   }
 </style>
 </head>
@@ -327,13 +469,13 @@
           <thead>
             <tr>
               <th class="nosort" style="width:34px"><input type="checkbox" id="selAll" title="全选/取消当前可见行"></th>
-              <th class="nosort">#</th>
+              <th class="nosort col-rank">#</th>
               <th data-sort="name" title="点击排序">名称</th>
-              <th data-sort="price" title="点击排序">现价</th>
+              <th data-sort="price" class="col-price" title="点击排序">现价</th>
               <th data-sort="change_pct" title="点击排序">涨跌幅</th>
               <th data-sort="amount_wan" title="点击排序" class="sorted" data-arrow="▼">成交额</th>
               <th data-sort="prem" title="转股溢价率 = 转债价 / 转股价值 − 1，点击排序">溢价率</th>
-              <th data-sort="volume" title="点击排序">成交量</th>
+              <th data-sort="volume" class="col-vol hide-xs" title="点击排序">成交量</th>
               <th class="hide-sm nosort">最高</th>
               <th class="hide-sm nosort">最低</th>
               <th class="nosort">K线</th>
@@ -658,13 +800,13 @@ function buildRow(r, i) {
   tr.dataset.code = r.code;
   tr.innerHTML =
     '<td><input type="checkbox" class="wchk" data-code="' + r.code + '"></td>' +
-    '<td><span class="' + rankCls(i) + '">' + (i + 1) + '</span></td>' +
+    '<td class="col-rank"><span class="' + rankCls(i) + '">' + (i + 1) + '</span></td>' +
     '<td class="name">' + r.name + '<span class="stock">' + (r.stock || '') + '</span>' + '<span class="rd-tag"></span>' + '<span class="mid-tag"></span></td>' +
-    '<td class="num"></td>' +
+    '<td class="num col-price"></td>' +
     '<td><span class="chg-badge"></span></td>' +
     '<td class="amount"></td>' +
     '<td class="num prem"></td>' +
-    '<td class="num"></td>' +
+    '<td class="num col-vol hide-xs"></td>' +
     '<td class="num hide-sm"></td>' +
     '<td class="num hide-sm"></td>' +
     '<td><button class="kbtn" data-code="' + r.code + '">K线</button></td>';
@@ -1322,7 +1464,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.2.6';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.2.7';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
