@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>可转债监控 · 直连自检</title>
+<style>
+:root{--bg:#f7f8fa;--card:#fff;--ink:#1f2328;--ink2:#4a5158;--ink3:#7a838c;
+ --line:#e3e6ea;--ok:#1a7f5a;--bad:#c0392b;--warn:#b45309;--blue:#1d4ed8}
+*{box-sizing:border-box}
+body{margin:0;padding:20px;background:var(--bg);color:var(--ink);
+ font:15px/1.7 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:960px;margin:0 auto}
+h1{font-size:21px;margin:0 0 4px}
+.sub{color:var(--ink3);font-size:13px;margin-bottom:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+ padding:14px 16px;margin-bottom:12px}
+.env{font:12.5px/1.8 "Cascadia Mono",Consolas,monospace;color:var(--ink2);word-break:break-all}
+.row{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-bottom:1px dashed var(--line)}
+.row:last-child{border-bottom:0}
+.badge{flex:none;width:62px;text-align:center;border-radius:6px;padding:2px 0;
+ font-size:12px;font-weight:700;color:#fff;background:var(--ink3)}
+.badge.ok{background:var(--ok)} .badge.bad{background:var(--bad)} .badge.warn{background:var(--warn)}
+.name{flex:none;width:230px;font-size:13.5px;font-weight:600}
+.det{flex:1;font:12.5px/1.7 "Cascadia Mono",Consolas,monospace;color:var(--ink2);word-break:break-all}
+.det .e{color:var(--bad)}
+.note{font-size:12.5px;color:var(--ink3);margin-top:8px}
+.big{font-size:13.5px;color:var(--ink2);background:#fbfbfc;border:1px solid var(--line);
+ border-radius:8px;padding:10px 12px;margin-top:10px}
+button{margin-top:12px;padding:7px 16px;border-radius:8px;border:1px solid var(--line);
+ background:#fff;font-size:13.5px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>直连自检</h1>
+<div class="sub">逐项测试浏览器能否直接拿到数据源。绿色 = 通过，红色 = 失败（失败原因会写出来）。</div>
+
+<div class="card">
+  <div class="env" id="env">读取环境…</div>
+</div>
+
+<div class="card" id="rows"></div>
+
+<div class="card">
+  <div class="big" id="verdict">检测中…</div>
+  <button id="copyBtn">复制结果</button>
+</div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const QC = 'https://qt.gtimg.cn/q=sh113709';
+const KC = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=sh113709,m5,,8';
+const LC = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_BOND_CB_LIST&columns=SECURITY_CODE,CONVERT_STOCK_CODE&pageSize=2&source=WEB&client=WEB&pageNumber=1';
+const PC = 'https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&fields=f12,f235,f236,f237&secids=1.113709';
+
+const results = [];
+
+$('#env').textContent =
+  'location.href    = ' + location.href + '\n' +
+  'location.origin  = ' + location.origin + '\n' +
+  'hostname / port  = ' + location.hostname + ' / ' + (location.port || '(默认)') + '\n' +
+  '判定 USE_BACKEND = ' + (/^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011')
+  + '   （false → 走浏览器直连，正是要测的）\n' +
+  'UA               = ' + navigator.userAgent;
+
+function row(name, state, detail) {
+  const d = document.createElement('div');
+  d.className = 'row';
+  d.innerHTML = '<span class="badge ' + state + '">' +
+    (state === 'ok' ? '通过' : state === 'bad' ? '失败' : '注意') + '</span>' +
+    '<span class="name">' + name + '</span><span class="det">' + detail + '</span>';
+  $('#rows').appendChild(d);
+}
+
+function errInfo(e) {
+  return '<span class="e">' + (e && e.name ? e.name : 'Error') + '</span>: ' +
+         ((e && e.message) || String(e));
+}
+
+async function t(name, fn) {
+  try {
+    const r = await fn();
+    row(name, 'ok', r);
+    results.push([name, 'ok', r.replace(/<[^>]+>/g, '')]);
+  } catch (e) {
+    const d = errInfo(e);
+    row(name, 'bad', d);
+    results.push([name, 'bad', (e && e.name) + ': ' + ((e && e.message) || e)]);
+  }
+}
+
+(async () => {
+  // ① 最朴素的方式
+  await t('腾讯行情 · 普通 fetch', async () => {
+    const r = await fetch(QC);
+    const b = await r.arrayBuffer();
+    const txt = new TextDecoder('gbk').decode(b);
+    if (b.byteLength < 50) throw new Error('返回内容过短（' + b.byteLength + ' 字节）');
+    return 'HTTP ' + r.status + ' ｜ ' + b.byteLength + ' 字节 ｜ ' + txt.slice(0, 60);
+  });
+
+  // ② 之前用的方式（带 no-store）——用来验证「预检」猜测
+  await t('腾讯行情 · 带 cache:no-store', async () => {
+    const r = await fetch(QC, { cache: 'no-store' });
+    const b = await r.arrayBuffer();
+    return 'HTTP ' + r.status + ' ｜ ' + b.byteLength + ' 字节';
+  });
+
+  // ③ GBK 解码能力
+  await t('TextDecoder(gbk) 可用性', async () => {
+    const t = new TextDecoder('gbk').decode(new Uint8Array([0xd5, 0xf1, 0x32, 0x36]));
+    if (t !== '振26') throw new Error('解码结果异常：' + t);
+    return '正常，测试串解码为「' + t + '」';
+  });
+
+  // ④ K 线
+  await t('腾讯 5 分钟 K 线 · 普通 fetch', async () => {
+    const r = await fetch(KC);
+    const j = await r.json();
+    const n = (((j.data || {})['sh113709'] || {}).m5 || []).length;
+    if (!n) throw new Error('返回了 JSON 但没有 m5 数据');
+    return 'HTTP ' + r.status + ' ｜ m5 根数 ' + n;
+  });
+
+  // ⑤ 东财清单（行情依赖它）
+  await t('东财可转债清单', async () => {
+    const r = await fetch(LC);
+    const j = await r.json();
+    const n = ((j.result || {}).data || []).length;
+    if (!n) throw new Error('返回了 JSON 但没有数据');
+    return 'HTTP ' + r.status + ' ｜ 条数 ' + n + ' ｜ 总数 ' + (j.result || {}).count;
+  });
+
+  // ⑥ 东财溢价率（跨域未知的一项）
+  await t('东财溢价率 push2', async () => {
+    const r = await fetch(PC);
+    const j = await r.json();
+    const d = ((j.data || {}).diff) || [];
+    if (!d.length) throw new Error('返回了 JSON 但没有 diff 数据');
+    return 'HTTP ' + r.status + ' ｜ ' + JSON.stringify(d[0]).slice(0, 80);
+  });
+
+  // ⑦ JSONP 兜底：<script> 加载腾讯行情（不受 CORS 限制）
+  await t('腾讯行情 · script 标签兜底', () => new Promise((res, rej) => {
+    const old = window.v_sh113709;
+    const s = document.createElement('script');
+    s.src = QC + '&_=' + Date.now();
+    s.onload = () => {
+      const v = window.v_sh113709;
+      if (v) res('可用 ｜ 收到长度 ' + String(v).length + ' ｜ ' + String(v).slice(0, 40));
+      else rej(new Error('脚本加载了但没拿到 v_sh113709'));
+    };
+    s.onerror = () => rej(new Error('script 加载失败'));
+    document.head.appendChild(s);
+    setTimeout(() => rej(new Error('超时（5s）')), 5000);
+  }));
+
+  // 结论
+  const bads = results.filter(r => r[1] === 'bad');
+  const passed = results.filter(r => r[1] === 'ok').length;
+  const v = $('#verdict');
+  if (!bads.length) {
+    v.innerHTML = '<b style="color:var(--ok)">全部通过（' + passed + '/' + results.length + '）</b><br>' +
+      '浏览器直连数据源没问题 —— 若监控页仍无数据，问题在页面逻辑，请把本页截图发我。';
+  } else {
+    v.innerHTML = '<b style="color:var(--bad)">有 ' + bads.length + ' 项失败（通过 ' + passed + '/' + results.length + '）</b><br>' +
+      '失败的项：' + bads.map(b => b[0]).join('、') + '<br>' +
+      '请把本页截图发我。<b>若「script 标签兜底」是通过的</b>，说明只是 fetch 被拦，我可以改用 script 方式取数。';
+  }
+})();
+
+$('#copyBtn').onclick = () => {
+  const txt = '=== 直连自检结果 ===\n' + $('#env').textContent + '\n\n' +
+    results.map(r => '[' + r[1] + '] ' + r[0] + ' → ' + r[2]).join('\n');
+  navigator.clipboard.writeText(txt).then(
+    () => { $('#copyBtn').textContent = '已复制 ✓'; },
+    () => { $('#copyBtn').textContent = '复制失败，请手动截图'; });
+};
+</script>
+</body>
+</html>
