@@ -544,6 +544,7 @@ function setTone(el, c) {       // 只切换 up/down/flat，保留闪烁等附�
 
 // ==================== 全局状态 ====================
 let allRows = [];                // 后端返回的全市场行情
+let allRowsTs = 0;               // 这份行情快照的取得时刻（自动扫描据此判断快照是否过期）
 let sortKey = 'amount_wan';      // 当前排序字段
 let sortDir = 'desc';            // desc / asc
 let searchText = '';             // 搜索词
@@ -601,6 +602,7 @@ function applyRender() {
   document.title = '可转债监控 · ' + (d.market || '') + (curCode ? ' · ' + curCode : '');
 
   allRows = d.rows || [];
+  allRowsTs = Date.now();
   // 溢价率由 /api/premium 单独下发，合并进行情行（绑到行对象，排序/搜索才认得）
   allRows.forEach(r => { const p = premMap[r.code]; r.prem = (p && p.pr != null) ? p.pr : null; });
   // 校验上次选中的债是否还存在（服务重启/清单变化）
@@ -1355,6 +1357,39 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) { scheduleRender(); load(); }
 });
 
+// ==================== 行情快照保鲜（自动扫描专用）====================
+// 为什么要它（2026-09-30 振26转债 113709 事故）：
+//   load() 开头有 `if (document.hidden) return;` —— 标签页在后台时**行情快照不再更新**。
+//   但自动扫描（autoWatchScan / scan60Watch）**不检查 document.hidden，照常每 10 秒跑**，
+//   于是它会拿着【上一交易日收盘时】的 allRows 去算「成交额前 20」：
+//     · 昨天没量、今天才爆量的债（如 113709，昨天第 45 名）永远进不了扫描名单；
+//     · 掉出昨天前 20 的债又会一直被误剔。
+//   实测铁证：10:15:37 入池的 9 只，其遍历顺序与「09-29 排名」严格升序吻合
+//   （1→5→9→10→11→15→17→19→20），与「今日排名」完全不符。
+// 所以：扫描前先确认快照够新；过期就补刷一次（不看 document.hidden —— 扫描都在跑，
+//       刷一次行情的开销完全可以承受）。
+const QUOTES_MAX_AGE = 15000;    // 快照保质期 15 秒（扫描 10 秒一轮，留一点余量）
+let quotesBusy = false;
+
+async function ensureQuotesFresh() {
+  if (quotesBusy) return;                                        // 上一轮还没回来就算了
+  if (allRows.length && Date.now() - allRowsTs < QUOTES_MAX_AGE) return;
+  quotesBusy = true;
+  try {
+    const res = await fetch('/api/quotes', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    lastMarket = d.market; lastTs = d.ts; lastError = d.error || '';
+    render(d);                    // render() 内部会更新 allRows / allRowsTs
+    loadPremium();
+    loadRedeem();
+  } catch (e) {
+    console.warn('ensureQuotesFresh failed', e);                 // 失败就沿用旧快照，下一轮再试
+  } finally {
+    quotesBusy = false;
+  }
+}
+
 // ============ 破位剔除：入池之后（且 10:15 后）跌破【入池时的日内低点】即剔除 ============
 // 判定口径（命中即剔除，不要求是最新一根；但**必须是「下跌」的那根**）：
 //   ① 规则仅在「最新一根 K 线时间 ≥ 10:15」后启用（按 K 线时间，与系统时间脱钩）
@@ -1718,6 +1753,7 @@ async function autoWatchScan() {
   const cb = $('autoWatch');
   if (!cb || !cb.checked) return;
   if (!allRows.length) return;
+  await ensureQuotesFresh();     // ⭐ 先确保行情快照是【当天】的，别拿旧快照算「成交额前 20」
 
   // 前20 + 自选池 去重合并，一次批量请求拿全部K线（原先是 20+ 次单独请求）
   const top20 = top20Codes();
@@ -1856,6 +1892,7 @@ function hitDayHigh60Today(d) {
 async function scan60Watch() {
   if (w60Busy) return;
   if (!allRows.length) return;
+  await ensureQuotesFresh();     // ⭐ 同上：60下跌 也按「当天的成交额前 20」扫描
   const top20 = top20Codes();
   const codes = uniqCodes(top20, watch60);
   if (!codes.length) return;
