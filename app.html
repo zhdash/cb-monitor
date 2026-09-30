@@ -1367,6 +1367,57 @@ async function fetchText(url, isGbk) {
   return new TextDecoder('utf-8').decode(buf);
 }
 
+// 腾讯行情兜底通道：<script> 加载【不受 CORS 约束】（响应本身就是 `v_sh113709="…"` 赋值语句，
+// 会直接在 window 上生成同名全局）。实测：能直接读到变量，且响应头 charset=GBK 会被浏览器正确解码
+// （中文名不乱码）。用于 fetch 被跨域挡住时自动切换。
+function quotesViaScript(url, symbols) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    let done = false;
+    const finish = (ok, arg) => {
+      if (done) return;
+      done = true; clearTimeout(tm);
+      try { s.remove(); } catch (e) {}
+      if (!ok) { reject(arg); return; }
+      const rows = [];
+      for (const sym of symbols) {
+        const v = window['v_' + sym];
+        if (v != null) { rows.push('v_' + sym + '="' + v + '"'); try { delete window['v_' + sym]; } catch (e) {} }
+      }
+      if (!rows.length) reject(new Error('脚本加载了但没读到行情变量'));
+      else resolve(rows.join('\n'));
+    };
+    const tm = setTimeout(() => finish(false, new Error('脚本加载超时')), 10000);
+    s.onload = () => finish(true, null);
+    s.onerror = () => finish(false, new Error('脚本加载失败'));
+    s.src = url;
+    document.head.appendChild(s);
+  });
+}
+
+// K 线兜底通道：腾讯 mkline 接口支持 JSONP —— 加 &_callback=<函数名> 就返回 `<函数名>({…})`，
+// 用 <script> 加载即可同样绕过 CORS（实测有效）。回调名必须每次唯一（并发请求会互相覆盖）。
+let _jsonpSeq = 0;
+function jsonpViaScript(url, cbName) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    let done = false;
+    const finish = (ok, arg) => {
+      if (done) return;
+      done = true; clearTimeout(tm);
+      try { s.remove(); } catch (e) {}
+      try { delete window[cbName]; } catch (e) {}
+      if (ok) resolve(arg); else reject(arg);
+    };
+    const tm = setTimeout(() => finish(false, new Error('脚本加载超时')), 12000);
+    window[cbName] = obj => finish(true, obj);
+    s.onload = () => setTimeout(() => finish(false, new Error('脚本已加载但回调未触发')), 1200);
+    s.onerror = () => finish(false, new Error('脚本加载失败'));
+    s.src = url;
+    document.head.appendChild(s);
+  });
+}
+
 // 标准布林线：MID = SMA(n)；UPPER/LOWER = MID ± mult×STD(n)；STD 用总体标准差（ddof=0）
 function calcBoll(closes, period, mult) {
   const p = period || BOLL_PERIOD, mu = (mult == null ? BOLL_MULT : mult);
@@ -1505,8 +1556,14 @@ async function directQuotes() {
   for (let i = 0; i < secids.length; i += TC_BATCH) batches.push(secids.slice(i, i + TC_BATCH));
   const batchErrs = [];
   const parts = await mapLimit(batches, 4, async b => {
-    try { return await fetchText(TC_QUOTE_URL + b.join(','), true); }
-    catch (e) { batchErrs.push(e.message || String(e)); return ''; }
+    const url = TC_QUOTE_URL + b.join(',');
+    try { return await fetchText(url, true); }
+    catch (e) {
+      // fetch 挂了（多为跨域被拒）→ 自动改用 <script> 通道重试一次
+      const first = e.message || String(e);
+      try { return await quotesViaScript(url, b); }
+      catch (e2) { batchErrs.push('fetch: ' + first + ' ／ script: ' + (e2.message || e2)); return ''; }
+    }
   });
   const rows = [];
   const re = /v_([a-z]{2}\d{6})="([^"]*)"/g;
@@ -1534,9 +1591,11 @@ async function directQuotes() {
   const now = new Date();
   // ⚠️ 失败不能静默：一条都没拿到时把原因写进 error，页面会直接显示出来
   //    （否则只剩「正在首次拉取…」，既不知道卡在哪、也不知道是不是真在等）
+  const allBothFailed = batchErrs.length === batches.length && batchErrs.every(s => s.indexOf('／ script:') >= 0);
   const error = rows.length ? ''
     : (batchErrs.length
-        ? ('腾讯行情 ' + batchErrs.length + '/' + batches.length + ' 批全部失败：' + batchErrs[0])
+        ? ('腾讯行情 ' + batchErrs.length + '/' + batches.length + ' 批全部失败：' + batchErrs[0]
+           + (allBothFailed ? '（fetch 与 script 两种通道都失败 → 请求被拦截或网络不通）' : ''))
         : '腾讯行情返回空数据');
   const data = {
     market: localMarketStatus(),
@@ -1555,7 +1614,15 @@ async function directOneKline(code, period, need) {
   const hit = _klineCache.get(key);
   if (hit && Date.now() - hit.ts < KLINE_CACHE_TTL) return hit.data;
   const sym = cbSymbol(code);
-  const built = buildKlineFromTc(await fetchText(TC_KLINE_URL + sym + ',' + period + ',,320', false), sym, period);
+  const url = TC_KLINE_URL + sym + ',' + period + ',,320';
+  let raw;
+  try { raw = await fetchText(url, false); }
+  catch (e) {
+    // fetch 挂了（多为跨域被拒）→ 自动改用 JSONP（<script>）通道重试一次
+    const cbName = '__cbKline' + (++_jsonpSeq);
+    raw = JSON.stringify(await jsonpViaScript(url + '&_callback=' + cbName, cbName));
+  }
+  const built = buildKlineFromTc(raw, sym, period);
   if (!built) throw new Error('K线为空');
   let out = built;
   if (need && built.times.length > need) {        // 尾部裁剪（与后端 _tail_slice 一致）
