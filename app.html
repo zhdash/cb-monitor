@@ -1782,7 +1782,15 @@ async function autoWatchScan() {
       }
       if (checkDownTrend(d) && !watchSet.has(code) && !redeemSet.has(code)) {
         watchSet.add(code);
-        watchEntry[code] = String(d.times[d.times.length - 1]);   // 记录入选取样点
+        // ⭐ 入池取样点必须记【已收盘的最后一根】—— 也就是让 strongDownCount 达标的那根。
+        //    记「数据末根」会拿到【正在走的那根】，那根 K 线一旦创了日内新低就会被【双重豁免】：
+        //      ① 基准 base 用「取样点的前一根」算（baseEnd = ei-1）→ 刚创低的那根被算进基准；
+        //      ② 检查范围又从取样点之后开始（start = ei）→ 那根本身不会被判。
+        //    结果：该剔的不剔。2026-09-30 振26转债 113709 实测：
+        //      11:10 下跌 −0.173%、低 179.700 = 日内新低；取样点却记成正在走的 11:15
+        //      → 基准被拉到 179.700 → 不剔。改记 11:10 后 → 低 179.700 ≤ 基准 180.654 → 正确剔除。
+        const ci = lastClosedIdx(d);
+        watchEntry[code] = String(d.times[ci >= 0 ? ci : d.times.length - 1]);
         added++;
         feedPush(code, 'in', '连跌 ' + strongDownCount(d) + ' 根达标');
       }
