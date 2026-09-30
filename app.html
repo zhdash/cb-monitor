@@ -1352,8 +1352,11 @@ async function mapLimit(items, limit, fn) {
 }
 
 // 取文本：腾讯行情是 GBK，必须按 arrayBuffer 拿再解码（fetch().text() 会按 UTF-8 解成乱码）
+// ⚠️ 跨域请求【不要】带 cache:'no-store' —— 它会让浏览器附加 Cache-Control / Pragma 请求头，
+//    从而触发 CORS 预检（OPTIONS）；预检一旦不被上游支持，真正的 GET 根本发不出去。
+//    这里改为自建 TTL 缓存 + 时间戳破缓存，既避免预检又能保证新鲜度。
 async function fetchText(url, isGbk) {
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await fetch(url);
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const buf = await res.arrayBuffer();
   if (isGbk) {
@@ -1421,7 +1424,7 @@ async function fetchCbList() {
   for (;;) {
     const url = EM_LIST_URL + '?reportName=RPT_BOND_CB_LIST&columns=ALL&pageNumber=' + page
               + '&pageSize=500&sortColumns=SECURITY_CODE&sortTypes=1&source=WEB&client=WEB';
-    const res = await fetch(url, { cache: 'no-store' });
+    const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const j = await res.json();
     const r = (j && j.result) || {};
@@ -1548,7 +1551,7 @@ async function directPremium() {
   for (let i = 0; i < secids.length; i += CH) chunks.push(secids.slice(i, i + CH));
   await mapLimit(chunks, 3, async ch => {
     const url = EM_PREM_URL + '?fltt=2&fields=f12,f235,f236,f237&secids=' + ch.join(',');
-    const res = await fetch(url, { cache: 'no-store' });
+    const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const j = await res.json();
     const diff = (j && j.data && j.data.diff) || [];
