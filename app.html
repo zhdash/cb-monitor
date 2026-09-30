@@ -1418,6 +1418,35 @@ function jsonpViaScript(url, cbName) {
   });
 }
 
+// 取一批行情。两级兜底：① fetch 失败 → ② <script> 通道 → ③ 仍失败且这批还够大 → 【对半拆开重试】。
+// ⭐ 为什么要拆（2026-09-30 老大浏览器实测）：单只请求 200 正常，而 80 只一批的请求 4/4 全挂，
+//    差异只在「URL 长度 / 逗号个数」（单只 URL ~30 字符、零逗号；80 只 ~720 字符、79 个逗号）。
+//    逐级拆小即可通过，且不必预先猜阈值。
+const TC_SPLIT_MIN = 5;        // 拆到这个只数还不行为止
+const TC_SPLIT_BUDGET = 12;    // 全局最多记录 12 条失败，避免整域名被拦时递归爆炸
+let   _tcMaxOK = TC_BATCH;     // 已知可用的最大批量：一旦大批量失败就下调并【记住】，下轮直接用小的，不再白试
+async function fetchQuotesBatch(symbols, errs) {
+  const url = TC_QUOTE_URL + symbols.join(',');
+  try { return await fetchText(url, true); }
+  catch (e) {
+    const e1 = e.message || String(e);
+    try { return await quotesViaScript(url, symbols); }
+    catch (e2) {
+      _tcMaxOK = Math.max(TC_SPLIT_MIN, Math.min(_tcMaxOK, symbols.length - 1));
+      if (symbols.length > TC_SPLIT_MIN && errs.length < TC_SPLIT_BUDGET) {
+        const mid = Math.ceil(symbols.length / 2);
+        const a = await fetchQuotesBatch(symbols.slice(0, mid), errs);
+        const b = await fetchQuotesBatch(symbols.slice(mid), errs);
+        return a + '\n' + b;
+      }
+      if (errs.length < TC_SPLIT_BUDGET) {
+        errs.push('fetch: ' + e1 + ' ／ script: ' + (e2.message || e2) + '（' + symbols.length + ' 只一批）');
+      }
+      return '';
+    }
+  }
+}
+
 // 标准布林线：MID = SMA(n)；UPPER/LOWER = MID ± mult×STD(n)；STD 用总体标准差（ddof=0）
 function calcBoll(closes, period, mult) {
   const p = period || BOLL_PERIOD, mu = (mult == null ? BOLL_MULT : mult);
@@ -1553,18 +1582,10 @@ async function directQuotes() {
   const meta = new Map(list.map(b => [b.code, b]));
   const secids = list.map(b => cbSymbol(b.code));
   const batches = [];
-  for (let i = 0; i < secids.length; i += TC_BATCH) batches.push(secids.slice(i, i + TC_BATCH));
+  const per = Math.max(TC_SPLIT_MIN, Math.min(TC_BATCH, _tcMaxOK));
+  for (let i = 0; i < secids.length; i += per) batches.push(secids.slice(i, i + per));
   const batchErrs = [];
-  const parts = await mapLimit(batches, 4, async b => {
-    const url = TC_QUOTE_URL + b.join(',');
-    try { return await fetchText(url, true); }
-    catch (e) {
-      // fetch 挂了（多为跨域被拒）→ 自动改用 <script> 通道重试一次
-      const first = e.message || String(e);
-      try { return await quotesViaScript(url, b); }
-      catch (e2) { batchErrs.push('fetch: ' + first + ' ／ script: ' + (e2.message || e2)); return ''; }
-    }
-  });
+  const parts = await mapLimit(batches, 2, b => fetchQuotesBatch(b, batchErrs));
   const rows = [];
   const re = /v_([a-z]{2}\d{6})="([^"]*)"/g;
   for (const raw of parts) {
@@ -1591,10 +1612,10 @@ async function directQuotes() {
   const now = new Date();
   // ⚠️ 失败不能静默：一条都没拿到时把原因写进 error，页面会直接显示出来
   //    （否则只剩「正在首次拉取…」，既不知道卡在哪、也不知道是不是真在等）
-  const allBothFailed = batchErrs.length === batches.length && batchErrs.every(s => s.indexOf('／ script:') >= 0);
+  const allBothFailed = batchErrs.length > 0 && batchErrs.every(s => s.indexOf('／ script:') >= 0);
   const error = rows.length ? ''
     : (batchErrs.length
-        ? ('腾讯行情 ' + batchErrs.length + '/' + batches.length + ' 批全部失败：' + batchErrs[0]
+        ? ('腾讯行情拉取失败：' + batchErrs[0]
            + (allBothFailed ? '（fetch 与 script 两种通道都失败 → 请求被拦截或网络不通）' : ''))
         : '腾讯行情返回空数据');
   const data = {
