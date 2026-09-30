@@ -1090,16 +1090,11 @@ async function loadKline(code, name, resetZoom, tf) {
   try {
     let d = null;
     if (curTf === '60m') {
-      const res = await fetch('/api/klines60?codes=' + encodeURIComponent(code) + '&tail=320',
-                              { cache: 'no-store' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const map = await res.json();
+      const map = await apiKlinesM60([code], 320);
       d = map && map[code];
       if (!d || d.error) { $('chartMeta').textContent = (d && d.error) || '60 分钟 K 线无数据'; return; }
     } else {
-      const res = await fetch('/api/kline?code=' + encodeURIComponent(code), { cache: 'no-store' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      d = await res.json();
+      d = await apiKlineOne(code);
       if (d.error) { $('chartMeta').textContent = d.error; return; }
     }
     if (!d.name && name) d.name = name;
@@ -1201,9 +1196,7 @@ async function loadPremium() {
   if (Date.now() - premAt < PREM_GAP) return;
   premAt = Date.now();
   try {
-    const res = await fetch('/api/premium', { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const d = await res.json();
+    const d = await apiPremium();
     premMap = (d && d.data) || {};
     scheduleRender();
   } catch (e) {
@@ -1268,9 +1261,7 @@ async function loadRedeem() {
   if (redeemAt && Date.now() - redeemAt < REDEEM_GAP) return;
   let ok = false;
   try {
-    const res = await fetch('/api/redeem', { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const d = await res.json();
+    const d = await apiRedeem();
     if (!d || d.error) throw new Error((d && d.error) || 'bad payload');
     redeemMap = d.data || {};
   } catch (e) {
@@ -1321,13 +1312,307 @@ function renderFeed() {
     (x.w ? '<span class="fw">' + x.w + '</span>' : '') + '</div>').join('');
 }
 
+// ==================== 数据适配层：本机后端 / 静态直连 二选一 ====================
+// 两种运行模式，判定逻辑只有一份，区别只在【去哪儿取数据】：
+//   ① 本机后端模式：页面从 http://127.0.0.1:8011 加载 → 走 Python 后端（连接池 + 缓存 + 批量合并）
+//   ② 静态直连模式：页面从任何其它地址加载（免费静态托管）→ 浏览器直接请求数据源
+// 直连可行性（2026-09-30 实测，这几个接口都返回 Access-Control-Allow-Origin: *）：
+//   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
+//   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
+// ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
+const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
+
+const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
+const TC_KLINE_URL = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=';
+const EM_LIST_URL  = 'https://datacenter-web.eastmoney.com/api/data/v1/get';
+const EM_PREM_URL  = 'https://push2.eastmoney.com/api/qt/ulist.np/get';
+const TC_BATCH     = 80;          // 腾讯行情单批只数（与后端 BATCH_SIZE 保持一致）
+const BOLL_PERIOD  = 20;          // 标准布林线周期
+const BOLL_MULT    = 2.0;         // 标准布林线倍数
+const KLINE_CACHE_TTL  = 4000;    // 直连模式 K 线客户端缓存（扫描与图表共用，别重复打上游）
+const QUOTES_CACHE_TTL = 2500;    // 直连模式行情缓存
+
+function cbSymbol(code) { return (String(code).startsWith('12') ? 'sz' : 'sh') + code; }   // 腾讯 symbol
+function cbSecid(code)  { return (String(code).startsWith('12') ? '0.' : '1.') + code; }   // 东财 secid
+
+// 并发受限的 map（直连模式一次要拉 20+ 只 K 线，必须限并发，别把上游打爆）
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  }
+  const n = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: n }, worker));
+  return out;
+}
+
+// 取文本：腾讯行情是 GBK，必须按 arrayBuffer 拿再解码（fetch().text() 会按 UTF-8 解成乱码）
+async function fetchText(url, isGbk) {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const buf = await res.arrayBuffer();
+  if (isGbk) {
+    try { return new TextDecoder('gbk').decode(buf); } catch (e) { /* 环境不支持就退回 utf-8 */ }
+  }
+  return new TextDecoder('utf-8').decode(buf);
+}
+
+// 标准布林线：MID = SMA(n)；UPPER/LOWER = MID ± mult×STD(n)；STD 用总体标准差（ddof=0）
+function calcBoll(closes, period, mult) {
+  const p = period || BOLL_PERIOD, mu = (mult == null ? BOLL_MULT : mult);
+  const n = closes.length;
+  const mid = new Array(n).fill(null), up = new Array(n).fill(null), lo = new Array(n).fill(null);
+  for (let i = p - 1; i < n; i++) {
+    let s = 0;
+    for (let j = i - p + 1; j <= i; j++) s += closes[j];
+    const m = s / p;
+    let v = 0;
+    for (let j = i - p + 1; j <= i; j++) v += (closes[j] - m) * (closes[j] - m);
+    const sd = Math.sqrt(v / p);
+    mid[i] = +m.toFixed(4);
+    up[i]  = +(m + mu * sd).toFixed(4);
+    lo[i]  = +(m - mu * sd).toFixed(4);
+  }
+  return { mid: mid, upper: up, lower: lo };
+}
+
+// 腾讯时间 202608261455 → 2026-08-26 14:55
+function fmtTcTime(t) {
+  const s = String(t);
+  return s.length >= 12
+    ? s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) + ' ' + s.slice(8, 10) + ':' + s.slice(10, 12)
+    : s;
+}
+
+// 腾讯 mkline 原文 → {times, kline, vol, boll}（kline = [开, 收, 低, 高]，与后端口径一致）
+function buildKlineFromTc(raw, symbol, key) {
+  let node = {};
+  try { node = ((JSON.parse(raw).data || {})[symbol]) || {}; } catch (e) { return null; }
+  const arr = node[key] || [];
+  const times = [], klines = [], vols = [], closes = [];
+  for (const r of arr) {
+    if (!Array.isArray(r) || r.length < 6) continue;
+    const o = parseFloat(r[1]), c = parseFloat(r[2]), h = parseFloat(r[3]), l = parseFloat(r[4]);
+    if (!isFinite(o) || !isFinite(c) || !isFinite(h) || !isFinite(l)) continue;
+    times.push(fmtTcTime(r[0]));
+    klines.push([o, c, l, h]);
+    closes.push(c);
+    vols.push(parseFloat(r[5]) || 0);
+  }
+  if (!times.length) return null;
+  return { times: times, kline: klines, vol: vols, boll: calcBoll(closes) };
+}
+
+// —— 直连模式的缓存与清单 ——
+const _klineCache = new Map();     // 'code|m5|320' -> {ts, data}
+const _cbListCache = { ts: 0, data: null };
+let   _quotesCache = { ts: 0, data: null };
+
+// 全部可转债清单（代码 / 名称 / 正股代码）—— 东财 datacenter 分页，已实测允许跨域
+async function fetchCbList() {
+  if (_cbListCache.data && Date.now() - _cbListCache.ts < 6 * 3600 * 1000) return _cbListCache.data;
+  const rows = [];
+  let page = 1, count = null;
+  for (;;) {
+    const url = EM_LIST_URL + '?reportName=RPT_BOND_CB_LIST&columns=ALL&pageNumber=' + page
+              + '&pageSize=500&sortColumns=SECURITY_CODE&sortTypes=1&source=WEB&client=WEB';
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    const r = (j && j.result) || {};
+    const batch = r.data || [];
+    if (!batch.length) break;
+    if (count == null) count = r.count;
+    rows.push(...batch);
+    if ((count && rows.length >= count) || batch.length < 500) break;
+    page++;
+  }
+  const alive = rows.filter(r => !r.DELIST_DATE).map(r => ({
+    code: String(r.SECURITY_CODE),
+    name: r.SECURITY_NAME_ABBR || '',
+    stock: r.CONVERT_STOCK_CODE || '',
+  }));
+  if (alive.length) { _cbListCache.data = alive; _cbListCache.ts = Date.now(); }
+  return alive;
+}
+
+// 市场状态：与后端 market_status() 同口径，改用本地时钟
+function localMarketStatus() {
+  const now = new Date();
+  if (now.getDay() === 0 || now.getDay() === 6) return '休市';
+  const p = x => String(x).padStart(2, '0');
+  const t = p(now.getHours()) + ':' + p(now.getMinutes());
+  if ((t >= '09:15' && t <= '11:30') || (t >= '13:00' && t <= '15:00')) return '交易中';
+  if (t > '11:30' && t < '13:00') return '午间休市';
+  if (t >= '09:00' && t < '09:15') return '盘前';
+  return '已收盘';
+}
+
+// ---- ① 行情快照 ----
+async function directQuotes() {
+  if (_quotesCache.data && Date.now() - _quotesCache.ts < QUOTES_CACHE_TTL) return _quotesCache.data;
+  const list = await fetchCbList();
+  const meta = new Map(list.map(b => [b.code, b]));
+  const secids = list.map(b => cbSymbol(b.code));
+  const batches = [];
+  for (let i = 0; i < secids.length; i += TC_BATCH) batches.push(secids.slice(i, i + TC_BATCH));
+  const parts = await mapLimit(batches, 4, async b => {
+    try { return await fetchText(TC_QUOTE_URL + b.join(','), true); }
+    catch (e) { return ''; }
+  });
+  const rows = [];
+  const re = /v_([a-z]{2}\d{6})="([^"]*)"/g;
+  for (const raw of parts) {
+    let m;
+    while ((m = re.exec(raw))) {
+      const sym = m[1], f = m[2].split('~');
+      if (f.length < 40) continue;
+      const code = sym.slice(2);
+      const num = i => { const v = (f[i] || '').trim(); return (v === '' || v === '-') ? null : (isFinite(parseFloat(v)) ? parseFloat(v) : null); };
+      const amount = num(37);
+      if (amount == null) continue;                 // 与后端一致：无成交额的行不要
+      const mi = meta.get(code) || {};
+      rows.push({
+        code: code,
+        name: f[1] || mi.name || '',
+        stock: mi.stock || '',
+        price: num(3), change: num(31), change_pct: num(32),
+        amount_wan: amount, volume: num(6), high: num(33), low: num(34),
+      });
+    }
+  }
+  rows.sort((a, b) => (b.amount_wan || 0) - (a.amount_wan || 0));
+  const p = x => String(x).padStart(2, '0');
+  const now = new Date();
+  const data = {
+    market: localMarketStatus(),
+    ts: now.getFullYear() + '-' + p(now.getMonth() + 1) + '-' + p(now.getDate()) + ' ' + p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds()),
+    total: rows.length,
+    rows: rows,
+    error: '',
+  };
+  _quotesCache = { ts: Date.now(), data: data };
+  return data;
+}
+
+// ---- ② 批量 K 线（m5 / m60）----
+async function directOneKline(code, period, need) {
+  const key = code + '|' + period + '|' + need;
+  const hit = _klineCache.get(key);
+  if (hit && Date.now() - hit.ts < KLINE_CACHE_TTL) return hit.data;
+  const sym = cbSymbol(code);
+  const built = buildKlineFromTc(await fetchText(TC_KLINE_URL + sym + ',' + period + ',,320', false), sym, period);
+  if (!built) throw new Error('K线为空');
+  let out = built;
+  if (need && built.times.length > need) {        // 尾部裁剪（与后端 _tail_slice 一致）
+    const s = built.times.length - need;
+    out = {
+      times: built.times.slice(s), kline: built.kline.slice(s), vol: built.vol.slice(s),
+      boll: { mid: built.boll.mid.slice(s), upper: built.boll.upper.slice(s), lower: built.boll.lower.slice(s) },
+    };
+  }
+  _klineCache.set(key, { ts: Date.now(), data: out });
+  return out;
+}
+
+async function apiKlines(codes, tail, period) {
+  const kind = period || 'm5';
+  const nameOf = new Map(allRows.map(r => [r.code, r.name]));   // 用当前快照的名字（后端也是从清单取）
+  const arr = await mapLimit(codes, 6, async code => {
+    try {
+      const k = await directOneKline(code, kind, tail);
+      return { code: code, name: nameOf.get(code) || code, times: k.times, kline: k.kline, vol: k.vol, boll: k.boll };
+    } catch (e) {
+      return { code: code, error: 'K线获取失败: ' + e.message };
+    }
+  });
+  const map = {};
+  for (const d of arr) map[d.code] = d;
+  return map;
+}
+
+// ---- ③ 溢价率（东财 push2；跨域若被拒则该列留空）----
+let _premDirectFailed = false;
+async function directPremium() {
+  if (_premDirectFailed) return { data: {} };
+  const list = await fetchCbList();
+  const secids = list.map(b => cbSecid(b.code));
+  const out = {};
+  const CH = 50;
+  const chunks = [];
+  for (let i = 0; i < secids.length; i += CH) chunks.push(secids.slice(i, i + CH));
+  await mapLimit(chunks, 3, async ch => {
+    const url = EM_PREM_URL + '?fltt=2&fields=f12,f235,f236,f237&secids=' + ch.join(',');
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    const diff = (j && j.data && j.data.diff) || [];
+    for (const it of diff) {
+      const code = String(it.f12 || '');
+      if (!/^\d{6}$/.test(code)) continue;
+      out[code] = { pr: it.f237, cv: it.f236, cp: it.f235 };
+    }
+  }).catch(e => {
+    _premDirectFailed = true;
+    console.warn('溢价率直连失败（该列将留空）：', e.message);
+  });
+  return { data: out };
+}
+
+// ---- 统一入口：按模式分发 ----
+async function apiQuotes() {
+  if (!USE_BACKEND) return directQuotes();
+  const res = await fetch('/api/quotes', { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+async function apiKlinesM5(codes, tail) {
+  if (!USE_BACKEND) return apiKlines(codes, tail, 'm5');
+  const res = await fetch('/api/klines?codes=' + codes.join(',') + '&tail=' + tail, { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+async function apiKlinesM60(codes, tail) {
+  if (!USE_BACKEND) return apiKlines(codes, tail, 'm60');
+  const res = await fetch('/api/klines60?codes=' + codes.join(',') + '&tail=' + tail, { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+async function apiKlineOne(code) {
+  if (!USE_BACKEND) {
+    try {
+      const k = await directOneKline(code, 'm5', 0);     // 单只不裁切，与后端 /api/kline 一致
+      const row = allRows.find(r => r.code === code);
+      return { code: code, name: (row && row.name) || code, times: k.times, kline: k.kline, vol: k.vol, boll: k.boll };
+    } catch (e) { return { code: code, error: 'K线获取失败: ' + e.message }; }
+  }
+  const res = await fetch('/api/kline?code=' + encodeURIComponent(code), { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+async function apiPremium() {
+  if (!USE_BACKEND) return directPremium();
+  const res = await fetch('/api/premium', { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+async function apiRedeem() {
+  if (!USE_BACKEND) { const m = await fetchRedeemDirect(); return { data: m }; }
+  const res = await fetch('/api/redeem', { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
 // ==================== 数据加载 ====================
 async function load() {
   if (document.hidden) return;          // 后台标签页暂停轮询，回到前台再补
   try {
-    const res = await fetch('/api/quotes', { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const d = await res.json();
+    const d = await apiQuotes();
     lastMarket = d.market; lastTs = d.ts; lastError = d.error || '';
     render(d);
     loadPremium();
@@ -1376,9 +1661,7 @@ async function ensureQuotesFresh() {
   if (allRows.length && Date.now() - allRowsTs < QUOTES_MAX_AGE) return;
   quotesBusy = true;
   try {
-    const res = await fetch('/api/quotes', { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const d = await res.json();
+    const d = await apiQuotes();
     lastMarket = d.market; lastTs = d.ts; lastError = d.error || '';
     render(d);                    // render() 内部会更新 allRows / allRowsTs
     loadPremium();
@@ -1605,10 +1888,7 @@ async function midBandScan() {
   midScanBusy = true;
   try {
     // dayLowBreak 需要当天全部 K 线；恒用 LOD_TAIL；中轨只是顺便多读几个字段，载荷可接受
-    const res = await fetch('/api/klines?codes=' + codes.join(',') + '&tail=' + LOD_TAIL,
-                            { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const map = await res.json();
+    const map = await apiKlinesM5(codes, LOD_TAIL);
     const lodOn = autoWatchOn();    // 「自动监控」勾选才执行剔除
     let riseDrop = 0, lowDrop = 0;
     codes.forEach(code => {
@@ -1762,10 +2042,7 @@ async function autoWatchScan() {
 
   let added = 0, removed = 0, errMsg = '';
   try {
-    const res = await fetch('/api/klines?codes=' + codes.join(',') + '&tail=' + LOD_TAIL,
-                            { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const map = await res.json();
+    const map = await apiKlinesM5(codes, LOD_TAIL);
 
     for (let i = 0; i < top20.length; i++) {
       const code = top20[i];
@@ -1907,10 +2184,7 @@ async function scan60Watch() {
   w60Busy = true;
   let added = 0, removed = 0, err = '';
   try {
-    const res = await fetch('/api/klines60?codes=' + codes.join(',') + '&tail=' + W60_TAIL,
-                            { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const map = await res.json();
+    const map = await apiKlinesM60(codes, W60_TAIL);
     const info = {};
     codes.forEach(code => {
       const d = map && map[code];
