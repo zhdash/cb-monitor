@@ -1321,17 +1321,15 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.2.5';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.2.6';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
 const TC_KLINE_URL = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=';
 const EM_LIST_URL  = 'https://datacenter-web.eastmoney.com/api/data/v1/get';
 const EM_PREM_URL  = 'https://push2.eastmoney.com/api/qt/ulist.np/get';
-const TC_BATCH     = 8;           // 腾讯行情单批只数（静态直连）。
-                                  // ⚠️ 2026-09-30 实测：80 只一条 URL（~720 字符、79 个逗号）在老大的浏览器里
-                                  //    fetch 与 <script> 双双必然失败，而单只必然成功 ⇒ 从小批量起步，
-                                  //    由 _tcMaxOK 自适应调节；后端模式不经过这里，不受影响。
+const TC_BATCH_MIN = 8;           // 起步/保底批量（URL ≈ 95 字符，最保守也稳）
+const TC_BATCH_MAX = 80;          // 上限批量（与后端 BATCH_SIZE 一致）；连续成功会自己涨回这里
 const TC_MAX_REQ   = 48;          // 每轮行情的请求预算（含兜底与拆分重试），防止失败时自我轰炸
 const BOLL_PERIOD  = 20;          // 标准布林线周期
 const BOLL_MULT    = 2.0;         // 标准布林线倍数
@@ -1438,7 +1436,8 @@ function jsonpViaScript(url, cbName) {
 const TC_SPLIT_MIN = 1;        // 一路拆到「单只一请求」为止（单只已被 diag 实测证实可通，是保底尺寸）
 const TC_SPLIT_BUDGET = 12;    // 全局最多记录 12 条失败，避免整域名被拦时递归爆炸
 const TC_FETCH_TIMEOUT = 6000; // 单批请求超时（防「既不通也不报错」把整轮拖死）
-let   _tcMaxOK = TC_BATCH;     // 已知可用的最大批量：一旦大批量失败就下调并【记住】，下轮直接用小的，不再白试
+let   _tcMaxOK = TC_BATCH_MIN;   // 当前批量：请求失败就下调并记住；连续成功则翻倍试探（自寻最优）
+let   _tcOKStreak = 0;           // 连续成功的轮数（够了就尝试放大批量）
 async function fetchQuotesBatch(symbols, errs) {
   if (_quoteReqBudget <= 0) {                       // 预算耗尽：宁可不拿，也不能把上游/代理打坏
     if (errs.length < TC_SPLIT_BUDGET) errs.push('本轮请求预算已用完（共 ' + TC_MAX_REQ + ' 个）');
@@ -1456,6 +1455,7 @@ async function fetchQuotesBatch(symbols, errs) {
       // 两种通道都失败 → 把批量降到 1/4（比"对半"收敛快一倍：80 → 20 → 5 → 1）后重切重试。
       // 2026-09-30 实测：单只 200 正常、80 只一批 fetch 与 script 双失败 ⇒ 请求级限长，拆小必过。
       _tcMaxOK = Math.max(TC_SPLIT_MIN, Math.min(_tcMaxOK, Math.floor(symbols.length / 4)));
+      _tcOKStreak = 0;
       console.warn('[可转债监控] ' + symbols.length + ' 只一批的请求失败（fetch 与 script 都挂）→ 批量降到 '
                    + _tcMaxOK + ' 只后重试（判定为请求级限长，最常见是 URL 太长/逗号太多）');
       if (symbols.length > TC_SPLIT_MIN && errs.length < TC_SPLIT_BUDGET) {
@@ -1609,7 +1609,7 @@ async function directQuotes() {
   const meta = new Map(list.map(b => [b.code, b]));
   const secids = list.map(b => cbSymbol(b.code));
   const batches = [];
-  const per = Math.max(TC_SPLIT_MIN, Math.min(TC_BATCH, _tcMaxOK));
+  const per = Math.max(TC_SPLIT_MIN, Math.min(TC_BATCH_MAX, _tcMaxOK));
   for (let i = 0; i < secids.length; i += per) batches.push(secids.slice(i, i + per));
   _quoteReqBudget = TC_MAX_REQ;          // 每轮行情的请求预算（含兜底与拆分），防止失败时自我轰炸
   const batchErrs = [];
@@ -1653,6 +1653,12 @@ async function directQuotes() {
     rows: rows,
     error: error,
   };
+  // 连续成功 → 翻倍试探放大批量，自己涨回 TC_BATCH_MAX（一旦失败会被下调并记住，不会再试更大的）
+  if (rows.length && _tcMaxOK < TC_BATCH_MAX && ++_tcOKStreak >= 5) {
+    _tcMaxOK = Math.min(TC_BATCH_MAX, _tcMaxOK * 2);
+    _tcOKStreak = 0;
+    console.log('[可转债监控] 连续 5 轮拉取成功 → 批量提升到 ' + _tcMaxOK + ' 只');
+  }
   if (rows.length) _quotesCache = { ts: Date.now(), data: data };   // 空结果不缓存 → 下一轮立刻重试
   return data;
 }
