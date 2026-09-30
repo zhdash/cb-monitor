@@ -82,9 +82,16 @@ $('#env').textContent =
 function row(box, name, state, detail) {
   const d = document.createElement('div');
   d.className = 'row';
-  d.innerHTML = '<span class="badge ' + state + '">' +
-    (state === 'ok' ? '通过' : state === 'bad' ? '失败' : '注意') + '</span>' +
-    '<span class="name">' + name + '</span><span class="det">' + detail + '</span>';
+  const b = document.createElement('span');
+  b.className = 'badge ' + state;
+  b.textContent = (state === 'ok' ? '通过' : state === 'bad' ? '失败' : '注意');
+  const n = document.createElement('span');
+  n.className = 'name';
+  n.textContent = name;                       // 用 textContent：否则名字里的 <script> 会被当标签吞掉
+  const t = document.createElement('span');
+  t.className = 'det';
+  t.innerHTML = detail;
+  d.appendChild(b); d.appendChild(n); d.appendChild(t);
   box.appendChild(d);
 }
 
@@ -135,6 +142,24 @@ const b1 = $('#rows1'), b2 = $('#rows2'), b3 = $('#rows3');
     const r = await fetch(QC, { mode: 'no-cors' });
     return '请求发出成功（opaque 响应，status=' + r.status + '）—— 说明【网络通】，问题只在跨域';
   });
+
+  // 批量尺寸梯度：单只正常、80 只一批全挂 → 差异只在【URL 长度 / 逗号个数】
+  let cbSyms = null;
+  try {
+    const j = await (await fetch('cb_list.json')).json();
+    cbSyms = (j.list || []).map(x => (String(x[0]).startsWith('12') ? 'sz' : 'sh') + x[0]);
+  } catch (e) { cbSyms = null; }
+  for (const n of [1, 3, 10, 40, 80]) {
+    await t(b2, 'batch' + n, '批量 ' + n + ' 只（应用用的是 80）', async () => {
+      if (!cbSyms || cbSyms.length < n) throw new Error('本地 cb_list.json 不足，无法构造 ' + n + ' 只');
+      const url = 'https://qt.gtimg.cn/q=' + cbSyms.slice(0, n).join(',');
+      const r = await fetch(url);
+      const buf = await r.arrayBuffer();
+      const got = (new TextDecoder('gbk').decode(buf).match(/v_[a-z]{2}\d{6}="/g) || []).length;
+      if (!got) throw new Error('返回 ' + buf.byteLength + ' 字节但没有行情数据');
+      return 'HTTP ' + r.status + ' ｜ ' + buf.byteLength + ' 字节 ｜ 解析到 ' + got + ' 只 ｜ URL ' + url.length + ' 字符';
+    });
+  }
 
   await t(b2, 'script', '<script> 加载（不走 CORS + 能否直接取数）', () => new Promise((res, rej) => {
     const s = document.createElement('script');
@@ -188,21 +213,28 @@ const b1 = $('#rows1'), b2 = $('#rows2'), b3 = $('#rows3');
   // ===== 结论 =====
   const okCount = results.filter(r => r[1] === 'ok').length;
   const v = $('#verdict');
-  const tcNet = (R.nocors === 'ok') || (R.img === 'ok') || (R.script === 'ok');
+  const netOK = (R.nocors === 'ok') || (R.script === 'ok');
+  const smallOK = (R.batch1 === 'ok') || (R.batch3 === 'ok') || (R.batch10 === 'ok');
+  const bigBad = (R.batch40 === 'bad') || (R.batch80 === 'bad');
   let html = '<b>通过 ' + okCount + '/' + results.length + '</b>';
 
   if (!results.filter(r => r[1] === 'bad').length) {
     html += '<br><b style="color:var(--ok)">全部通过</b> —— 浏览器直连数据源没问题；若监控页仍无数据，把监控页截图发我。';
-  } else if (R.plain === 'bad' && !tcNet) {
+  } else if (smallOK && bigBad) {
+    html += '<br><b style="color:var(--warn)">判断：小批量能过、大批量过不去</b><br>' +
+      '⇒ 不是跨域、也不是域名被拦，而是 <b>URL 太长 / 逗号太多</b>（中间某层限长）。<br>' +
+      '监控页（v1.2.3 起）已改成<b>自适应拆分</b>：大批量失败会自动对半拆开重试，并记住可用批量。' +
+      '刷新监控页即可。';
+  } else if (R.plain === 'bad' && !netOK) {
     html += '<br><b style="color:var(--bad)">判断：腾讯 qt.gtimg.cn 在你浏览器里被【整层拦截】</b><br>' +
-      'ordinary fetch、no-cors、&lt;img&gt;、&lt;script&gt; <b>四种通道全部失败</b> ⇒ 不是跨域问题，' +
+      '普通 fetch、no-cors、&lt;script&gt; <b>多种通道全部失败</b> ⇒ 不是跨域问题，' +
       '是请求根本没发出去 / 被中途掐断。<br>' +
-      '<b>最可能：内容拦截扩展（uBlock Origin 等）或代理规则把 gtimg.cn 拦了。</b><br>' +
-      '→ 请在 <b>uBlock 图标里把本页（127.0.0.1:8022）加白名单</b>，或临时禁用扩展再刷新本页对比。';
-  } else if (R.plain === 'bad' && tcNet) {
+      '<b>最可能：内容拦截扩展或代理规则把 gtimg.cn 拦了。</b><br>' +
+      '→ 请用 <b>InPrivate 窗口</b>（默认禁用所有扩展）打开监控页对比；'
+      + '或在 uBlock 图标里把本页加白名单。';
+  } else if (R.plain === 'bad' && netOK) {
     html += '<br><b style="color:var(--warn)">判断：腾讯域名【网络是通的】，只是 fetch 被跨域挡住</b><br>' +
-      'no-cors / &lt;img&gt; / &lt;script&gt; 至少一个成功 ⇒ 连接没问题，是 CORS 被拒。' +
-      '我可以把行情改成 <b>&lt;script&gt; 方式取数</b>来绕过，告诉我一声就改。';
+      '监控页（v1.2.2 起）已内置 <b>&lt;script&gt; 通道</b>自动兜底，刷新监控页即可。';
   } else if (R.plain === 'ok' && R.kline === 'bad') {
     html += '<br><b style="color:var(--warn)">行情能拿，但 K 线拿不到</b> —— 把本页截图发我。';
   } else {
