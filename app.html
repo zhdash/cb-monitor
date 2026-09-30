@@ -416,7 +416,8 @@
   </footer>
 </div>
 
-<script src="/vendor/echarts.min.js"></script>
+<!-- 相对路径：本机后端（/app.html → /vendor/…）、静态模式、以及 GitHub Pages 这类子路径托管（/cb-monitor/app.html → /cb-monitor/vendor/…）都能命中 -->
+<script src="vendor/echarts.min.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
