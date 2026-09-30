@@ -1321,14 +1321,18 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.2.4';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.2.5';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
 const TC_KLINE_URL = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=';
 const EM_LIST_URL  = 'https://datacenter-web.eastmoney.com/api/data/v1/get';
 const EM_PREM_URL  = 'https://push2.eastmoney.com/api/qt/ulist.np/get';
-const TC_BATCH     = 80;          // 腾讯行情单批只数（与后端 BATCH_SIZE 保持一致）
+const TC_BATCH     = 8;           // 腾讯行情单批只数（静态直连）。
+                                  // ⚠️ 2026-09-30 实测：80 只一条 URL（~720 字符、79 个逗号）在老大的浏览器里
+                                  //    fetch 与 <script> 双双必然失败，而单只必然成功 ⇒ 从小批量起步，
+                                  //    由 _tcMaxOK 自适应调节；后端模式不经过这里，不受影响。
+const TC_MAX_REQ   = 48;          // 每轮行情的请求预算（含兜底与拆分重试），防止失败时自我轰炸
 const BOLL_PERIOD  = 20;          // 标准布林线周期
 const BOLL_MULT    = 2.0;         // 标准布林线倍数
 const KLINE_CACHE_TTL  = 4000;    // 直连模式 K 线客户端缓存（扫描与图表共用，别重复打上游）
@@ -1436,10 +1440,17 @@ const TC_SPLIT_BUDGET = 12;    // 全局最多记录 12 条失败，避免整域
 const TC_FETCH_TIMEOUT = 6000; // 单批请求超时（防「既不通也不报错」把整轮拖死）
 let   _tcMaxOK = TC_BATCH;     // 已知可用的最大批量：一旦大批量失败就下调并【记住】，下轮直接用小的，不再白试
 async function fetchQuotesBatch(symbols, errs) {
+  if (_quoteReqBudget <= 0) {                       // 预算耗尽：宁可不拿，也不能把上游/代理打坏
+    if (errs.length < TC_SPLIT_BUDGET) errs.push('本轮请求预算已用完（共 ' + TC_MAX_REQ + ' 个）');
+    return '';
+  }
+  _quoteReqBudget -= 1;
   const url = TC_QUOTE_URL + symbols.join(',');
   try { return await fetchText(url, true, TC_FETCH_TIMEOUT); }
   catch (e) {
     const e1 = e.message || String(e);
+    if (_quoteReqBudget <= 0) { if (errs.length < TC_SPLIT_BUDGET) errs.push('fetch: ' + e1 + ' ／ 预算耗尽'); return ''; }
+    _quoteReqBudget -= 1;
     try { return await quotesViaScript(url, symbols); }
     catch (e2) {
       // 两种通道都失败 → 把批量降到 1/4（比"对半"收敛快一倍：80 → 20 → 5 → 1）后重切重试。
@@ -1512,6 +1523,7 @@ function buildKlineFromTc(raw, symbol, key) {
 const _klineCache = new Map();     // 'code|m5|320' -> {ts, data}
 const _cbListCache = { ts: 0, data: null };
 let   _quotesCache = { ts: 0, data: null };
+let   _quoteReqBudget = 0;         // 本轮行情剩余可发请求数（防轰炸）
 
 // 全部可转债清单（代码 / 名称 / 正股代码）—— 东财 datacenter 分页，已实测允许跨域。
 // ⚠️ 2026-09-30 事故：这个接口偶尔会返回 {"result":null}（上游抖动）。旧代码里
@@ -1599,6 +1611,7 @@ async function directQuotes() {
   const batches = [];
   const per = Math.max(TC_SPLIT_MIN, Math.min(TC_BATCH, _tcMaxOK));
   for (let i = 0; i < secids.length; i += per) batches.push(secids.slice(i, i + per));
+  _quoteReqBudget = TC_MAX_REQ;          // 每轮行情的请求预算（含兜底与拆分），防止失败时自我轰炸
   const batchErrs = [];
   const parts = await mapLimit(batches, 2, b => fetchQuotesBatch(b, batchErrs));
   const rows = [];
@@ -1761,11 +1774,25 @@ async function apiRedeem() {
 }
 
 // ==================== 数据加载 ====================
+// 失败退避：行情拉取失败后按 15s → 30s → 60s → 120s（上限 2 分钟）逐级拉长重试间隔。
+// ⛔ 2026-09-30 教训：v1.2.1 的「没数据就每 10s 重试」+「拆分后请求很多」会变成自我轰炸
+//    （一轮最多 TC_MAX_REQ 个请求 × 每 10s 一轮），把浏览器/代理的连接状态打坏，
+//    最后连单只请求都失败 —— 命令行实测同一时刻连发 30 次全部 200，证明是浏览器侧被打坏。
+let _backoffMs = 0, _nextLoadAt = 0;
+function noteLoadFailure() {
+  _backoffMs = _backoffMs ? Math.min(_backoffMs * 2, 120000) : 15000;
+  _nextLoadAt = Date.now() + _backoffMs;
+  console.warn('[可转债监控] 行情拉取失败，' + Math.round(_backoffMs / 1000) + 's 后再试（退避，避免轰炸上游）');
+}
+function noteLoadSuccess() { _backoffMs = 0; _nextLoadAt = 0; }
+
 async function load() {
   if (document.hidden) return;          // 后台标签页暂停轮询，回到前台再补
+  if (Date.now() < _nextLoadAt) return; // 失败退避中（「立即刷新」此时也会等退避结束）
   try {
     const d = await apiQuotes();
     lastMarket = d.market; lastTs = d.ts; lastError = d.error || '';
+    (d.rows && d.rows.length) ? noteLoadSuccess() : noteLoadFailure();
     render(d);
     loadPremium();
     loadRedeem();
@@ -1777,6 +1804,7 @@ async function load() {
     failCnt = 0;
     $('hint').textContent = '';
   } catch (e) {
+    noteLoadFailure();
     failCnt++;
     const retryTxt = refreshSec > 0 ? (refreshSec + 's 后重试…') : '可点击「立即刷新」重试';
     $('hint').innerHTML = '<span class="err">连接失败（' + e.message + '），' + retryTxt + '</span>';
@@ -1813,6 +1841,7 @@ let quotesBusy = false;
 
 async function ensureQuotesFresh() {
   if (quotesBusy) return;                                        // 上一轮还没回来就算了
+  if (Date.now() < _nextLoadAt) return;                          // 失败退避中：扫描也别去轰上游
   if (allRows.length && Date.now() - allRowsTs < QUOTES_MAX_AGE) return;
   quotesBusy = true;
   try {
