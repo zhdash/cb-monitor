@@ -1321,7 +1321,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.2.1';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.2.4';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -1357,14 +1357,23 @@ async function mapLimit(items, limit, fn) {
 // ⚠️ 跨域请求【不要】带 cache:'no-store' —— 它会让浏览器附加 Cache-Control / Pragma 请求头，
 //    从而触发 CORS 预检（OPTIONS）；预检一旦不被上游支持，真正的 GET 根本发不出去。
 //    这里改为自建 TTL 缓存 + 时间戳破缓存，既避免预检又能保证新鲜度。
-async function fetchText(url, isGbk) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  const buf = await res.arrayBuffer();
-  if (isGbk) {
-    try { return new TextDecoder('gbk').decode(buf); } catch (e) { /* 环境不支持就退回 utf-8 */ }
+async function fetchText(url, isGbk, timeoutMs) {
+  let ctl = null, timer = null;
+  if (timeoutMs) {                      // 可选超时：防止某个请求「既不通也不报错」把整轮拖死
+    ctl = new AbortController();
+    timer = setTimeout(() => { try { ctl.abort(); } catch (e) {} }, timeoutMs);
   }
-  return new TextDecoder('utf-8').decode(buf);
+  try {
+    const res = await fetch(url, ctl ? { signal: ctl.signal } : undefined);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const buf = await res.arrayBuffer();
+    if (isGbk) {
+      try { return new TextDecoder('gbk').decode(buf); } catch (e) { /* 环境不支持就退回 utf-8 */ }
+    }
+    return new TextDecoder('utf-8').decode(buf);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // 腾讯行情兜底通道：<script> 加载【不受 CORS 约束】（响应本身就是 `v_sh113709="…"` 赋值语句，
@@ -1387,7 +1396,7 @@ function quotesViaScript(url, symbols) {
       if (!rows.length) reject(new Error('脚本加载了但没读到行情变量'));
       else resolve(rows.join('\n'));
     };
-    const tm = setTimeout(() => finish(false, new Error('脚本加载超时')), 10000);
+    const tm = setTimeout(() => finish(false, new Error('脚本加载超时')), TC_FETCH_TIMEOUT);
     s.onload = () => finish(true, null);
     s.onerror = () => finish(false, new Error('脚本加载失败'));
     s.src = url;
@@ -1422,22 +1431,28 @@ function jsonpViaScript(url, cbName) {
 // ⭐ 为什么要拆（2026-09-30 老大浏览器实测）：单只请求 200 正常，而 80 只一批的请求 4/4 全挂，
 //    差异只在「URL 长度 / 逗号个数」（单只 URL ~30 字符、零逗号；80 只 ~720 字符、79 个逗号）。
 //    逐级拆小即可通过，且不必预先猜阈值。
-const TC_SPLIT_MIN = 5;        // 拆到这个只数还不行为止
+const TC_SPLIT_MIN = 1;        // 一路拆到「单只一请求」为止（单只已被 diag 实测证实可通，是保底尺寸）
 const TC_SPLIT_BUDGET = 12;    // 全局最多记录 12 条失败，避免整域名被拦时递归爆炸
+const TC_FETCH_TIMEOUT = 6000; // 单批请求超时（防「既不通也不报错」把整轮拖死）
 let   _tcMaxOK = TC_BATCH;     // 已知可用的最大批量：一旦大批量失败就下调并【记住】，下轮直接用小的，不再白试
 async function fetchQuotesBatch(symbols, errs) {
   const url = TC_QUOTE_URL + symbols.join(',');
-  try { return await fetchText(url, true); }
+  try { return await fetchText(url, true, TC_FETCH_TIMEOUT); }
   catch (e) {
     const e1 = e.message || String(e);
     try { return await quotesViaScript(url, symbols); }
     catch (e2) {
-      _tcMaxOK = Math.max(TC_SPLIT_MIN, Math.min(_tcMaxOK, symbols.length - 1));
+      // 两种通道都失败 → 把批量降到 1/4（比"对半"收敛快一倍：80 → 20 → 5 → 1）后重切重试。
+      // 2026-09-30 实测：单只 200 正常、80 只一批 fetch 与 script 双失败 ⇒ 请求级限长，拆小必过。
+      _tcMaxOK = Math.max(TC_SPLIT_MIN, Math.min(_tcMaxOK, Math.floor(symbols.length / 4)));
+      console.warn('[可转债监控] ' + symbols.length + ' 只一批的请求失败（fetch 与 script 都挂）→ 批量降到 '
+                   + _tcMaxOK + ' 只后重试（判定为请求级限长，最常见是 URL 太长/逗号太多）');
       if (symbols.length > TC_SPLIT_MIN && errs.length < TC_SPLIT_BUDGET) {
-        const mid = Math.ceil(symbols.length / 2);
-        const a = await fetchQuotesBatch(symbols.slice(0, mid), errs);
-        const b = await fetchQuotesBatch(symbols.slice(mid), errs);
-        return a + '\n' + b;
+        const per = Math.max(TC_SPLIT_MIN, _tcMaxOK);
+        const chunks = [];
+        for (let i = 0; i < symbols.length; i += per) chunks.push(symbols.slice(i, i + per));
+        const got = await mapLimit(chunks, 2, c => fetchQuotesBatch(c, errs));
+        return got.join('\n');
       }
       if (errs.length < TC_SPLIT_BUDGET) {
         errs.push('fetch: ' + e1 + ' ／ script: ' + (e2.message || e2) + '（' + symbols.length + ' 只一批）');
