@@ -2,8 +2,24 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>可转债成交额监控 · Top20</title>
+<!-- iOS：存成主屏图标后全屏运行（无地址栏，接近原生） -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="可转债监控">
+<!-- iOS 会把长数字串自动识别成电话号并加下划线，代码列会中招 -->
+<meta name="format-detection" content="telephone=no,email=no,address=no">
+<meta name="theme-color" content="#f2f5fa">
+<!-- 提前建连：手机端首次取数可省掉 DNS + TLS 的往返 -->
+<link rel="preconnect" href="https://qt.gtimg.cn" crossorigin>
+<link rel="preconnect" href="https://ifzq.gtimg.cn" crossorigin>
+<link rel="preconnect" href="https://datacenter-web.eastmoney.com" crossorigin>
+<link rel="preconnect" href="https://push2.eastmoney.com" crossorigin>
+<link rel="dns-prefetch" href="//qt.gtimg.cn">
+<link rel="dns-prefetch" href="//ifzq.gtimg.cn">
+<link rel="dns-prefetch" href="//datacenter-web.eastmoney.com">
+<link rel="dns-prefetch" href="//push2.eastmoney.com">
 <style>
   :root{
     --bg:#f2f5fa; --panel:#ffffff;
@@ -31,6 +47,10 @@
 
   /* ---------- 响应式基线：防溢出 / 防 iOS 自动放大 / 安全区 ---------- */
   html{-webkit-text-size-adjust:100%}          /* 防 iOS 横屏自动放大正文字号 */
+  /* iOS / 触屏基线：去掉点击时的灰色闪块（改用 :active 反馈）；双击不再触发缩放 */
+  *{-webkit-tap-highlight-color:transparent}
+  button,.btn,.kbtn,.tf-btn,.chip,tbody tr,.watch-item,input,select,label{touch-action:manipulation}
+  button,.btn,.kbtn,.tf-btn{-webkit-touch-callout:none;user-select:none}
   img,svg,canvas,video{max-width:100%;height:auto}
   body{
     padding-left:max(22px,env(safe-area-inset-left));
@@ -317,7 +337,7 @@
     /* 状态条可横向滑动，但【报错 / 立即刷新 / 刷新间隔】必须排在最前，不能被挤出屏幕外 */
     #hint{order:-3}
     #manualBtn{order:-2;flex:0 0 auto}          /* 必须不收缩，否则文字被压成竖排 */
-    .chips>.chip:has(#refreshSel){order:-1}
+    .chips>.chip.chip-refresh{order:-1}       /* 显式类名，不依赖 :has()（老 iOS 不支持）*/
     #hint{flex:0 0 auto}
     /* 触控区：≥36px，桌面端更紧凑 */
     #refreshSel,.btn{min-height:36px;padding:6px 12px;font-size:13px}
@@ -389,16 +409,31 @@
   }
 
   /* ---------- 触屏设备：去掉 hover 依赖、放大点击区 ---------- */
+  /* ---------- 触屏设备（iOS 为主）：44px 触控基线 + 去掉 hover 依赖 + 补 :active 反馈 ---------- */
   @media (hover:none){
-    .watch-rm{opacity:1;width:26px;height:26px;line-height:24px;font-size:15px;right:10px;top:10px}
-    .watch-item{padding-right:46px}
-    .wchk{width:19px;height:19px}
-    #selAll{width:18px;height:18px}
-    .kbtn{min-height:32px;padding:5px 10px}
-    .tf-btn{min-height:36px;padding:6px 14px}
-    tbody td{padding-top:10px;padding-bottom:10px}
+    /* 触控区最小 44×44（Apple HIG）；桌面端保持紧凑 */
+    .btn{min-height:44px;padding:10px 16px;font-size:14.5px;border-radius:11px}
+    .kbtn{min-height:40px;padding:9px 14px;font-size:13px;border-radius:10px}
+    .tf-btn{min-height:44px;padding:10px 18px;font-size:14px}
+    #refreshSel{min-height:44px;padding:8px 10px;font-size:15px}
+    /* 删除按钮：原来靠 hover 才显形，触屏上根本看不见 → 常显并放大到 40px */
+    .watch-rm{opacity:1;width:40px;height:40px;line-height:38px;font-size:19px;
+              right:6px;top:50%;transform:translateY(-50%);border-radius:12px}
+    .watch-item{padding-right:58px;min-height:60px}
+    .wchk{width:23px;height:23px}
+    #selAll{width:23px;height:23px}
+    /* 行加高，手指点得准（整行可点 → 打开 K 线） */
+    tbody td{padding-top:14px;padding-bottom:14px}
+    thead th{padding-top:12px;padding-bottom:12px}
+    /* 触屏没有 hover：清掉残留态，改成 :active 即时反馈 */
     tbody tr:hover{background:transparent}
+    tbody tr:active{background:rgba(47,95,224,.09)}
     .watch-item:hover{background:transparent;border-color:transparent}
+    .watch-item:active{background:rgba(47,95,224,.07)}
+    .btn:active,.kbtn:active,.tf-btn:active{transform:scale(.95)}
+    /* 内层滚动区自己吞掉手势 —— 否则在表格/自选里竖滑会把整页一起拖走（iOS 橡皮筋） */
+    .tbl-scroll,.watch-list,.feed-list{overscroll-behavior:contain}
+    .chips{overscroll-behavior-x:contain}
   }
 
   /* ---------- 手机横屏（高度紧张）：压扁数据区，尽量一屏看全 ---------- */
@@ -413,6 +448,53 @@
     .card-feed .feed-list{max-height:120px}
     #chart{height:240px}
     .chart-empty{height:240px}
+  }
+
+  /* ---------- iOS Safari 的动态工具栏会让 100vh 高于可视区（内容被挡在工具栏后）----------
+     用 dvh（动态视口高度）修正；不支持的浏览器保留上面的 vh 规则。 */
+  @supports (height:100dvh){
+    @media (max-width:1024px){
+      .tbl-scroll{max-height:min(62dvh,520px)}
+      .watch-col .watch-list{max-height:min(52dvh,300px)}
+    }
+    @media (max-width:900px){
+      .tbl-scroll{max-height:min(58dvh,460px)}
+      .watch-col .watch-list{max-height:min(48dvh,280px)}
+    }
+    @media (max-width:768px){
+      .tbl-scroll{max-height:min(56dvh,420px)}
+      .watch-col .watch-list{max-height:min(46dvh,260px)}
+    }
+    @media (orientation:landscape) and (max-height:560px){
+      .tbl-scroll{max-height:min(62dvh,300px)}
+      .watch-col .watch-list{max-height:min(52dvh,220px)}
+    }
+  }
+
+  /* ---------- 手机端快捷跳转条（桌面端不显示）---------- */
+  .jump{display:none}
+  @media (max-width:768px){
+    .jump{
+      display:flex;align-items:center;gap:6px;
+      position:sticky;top:0;z-index:60;
+      margin:0 0 10px;padding:7px 2px calc(7px + 0px);
+      background:rgba(242,245,250,.93);
+      -webkit-backdrop-filter:saturate(180%) blur(12px);backdrop-filter:saturate(180%) blur(12px);
+      border-bottom:1px solid var(--border);
+      overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;
+    }
+    .jump::-webkit-scrollbar{display:none}
+    .jump-btn{
+      flex:0 0 auto;min-height:40px;padding:8px 15px;font-size:13.5px;font-weight:600;
+      border-radius:20px;border:1px solid var(--border);background:#fff;color:var(--text-2);
+      transition:transform .12s,background .12s,color .12s;
+      -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+    }
+    .jump-btn:active{transform:scale(.95)}
+    .jump-btn.on{background:var(--accent);border-color:transparent;color:#fff}
+    /* 锚点落位时给粘顶条留出高度，标题不被盖住 */
+    .card{scroll-margin-top:66px}
+    #toTop{margin-left:auto}
   }
 </style>
 </head>
@@ -430,7 +512,7 @@
       <span class="chip">市场状态 <b id="market" class="pill closed">加载中</b></span>
       <span class="chip">存续债 <b id="total">--</b> 只</span>
       <span class="chip">更新 <b id="ts">--</b><span id="tsRel" class="rel"></span></span>
-      <span class="chip">刷新
+      <span class="chip chip-refresh">刷新
         <select id="refreshSel" title="选择自动刷新间隔">
           <option value="3">3 秒</option>
           <option value="5">5 秒</option>
@@ -458,8 +540,18 @@
     </div>
   </div>
 
+  <!-- 手机端快捷跳转（粘顶，桌面端隐藏）：长页面上不必一路滑到底 -->
+  <nav class="jump" id="jump">
+    <button type="button" class="jump-btn" data-go="cardTable">行情</button>
+    <button type="button" class="jump-btn" data-go="cardWatch">5下跌</button>
+    <button type="button" class="jump-btn" data-go="cardWatch60">60下跌</button>
+    <button type="button" class="jump-btn" data-go="cardChart">K线</button>
+    <button type="button" class="jump-btn" data-go="cardFeed">流水</button>
+    <button type="button" class="jump-btn" id="toTop" title="回到顶部">↑ 顶部</button>
+  </nav>
+
   <div class="main">
-    <div class="card card-table">
+    <div class="card card-table" id="cardTable">
       <div class="toolbar">
         <input id="search" type="text" placeholder="搜索代码 / 名称 / 正股代码…" autocomplete="off">
         <span class="cnt" id="cnt">--</span>
@@ -489,7 +581,7 @@
     </div>
 
     <div class="watch-col">
-    <div class="card card-watch">
+    <div class="card card-watch" id="cardWatch">
       <div class="card-hd">
         <div class="t">5下跌 <span class="n" id="watchCnt">0</span></div>
         <button id="watchClear" class="kbtn" title="清空自选">清空</button>
@@ -504,7 +596,7 @@
       <div class="watch-list" id="watchList"></div>
     </div>
 
-      <div class="card card-watch60">
+      <div class="card card-watch60" id="cardWatch60">
         <div class="card-hd">
           <div class="t">60下跌 <span class="n" id="w60Cnt">0</span></div>
           <button id="w60Clear" class="kbtn" title="清空">清空</button>
@@ -517,7 +609,7 @@
       </div>
     </div>
 
-    <div class="card card-chart">
+    <div class="card card-chart" id="cardChart">
       <div class="chart-hd">
         <div class="chart-title" id="chartTitle">5分钟K线 · 布林线</div>
         <div class="chart-hd-right">
@@ -538,7 +630,7 @@
     </div>
   </div>
 
-  <div class="card card-feed">
+  <div class="card card-feed" id="cardFeed">
     <div class="card-hd">
       <div class="t">5下跌进出流水 <span class="n" id="feedCnt">0</span></div>
       <button id="feedClear" class="kbtn" title="清空流水">清空</button>
@@ -558,8 +650,8 @@
   </footer>
 </div>
 
-<!-- 相对路径：本机后端（/app.html → /vendor/…）、静态模式、以及 GitHub Pages 这类子路径托管（/cb-monitor/app.html → /cb-monitor/vendor/…）都能命中 -->
-<script src="vendor/echarts.min.js"></script>
+<!-- echarts（约 1MB）改为【按需加载】：第一次要画 K 线时才拉，不拖慢手机首屏。
+     相对路径写法：本机后端（/app.html → /vendor/…）、静态模式、子路径托管都能命中。 -->
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -1073,10 +1165,44 @@ setInterval(() => { if ($('ts').textContent) updateTsRel($('ts').textContent); }
 
 // ==================== K线图 ====================
 let chart = null;
+let _ecPromise = null;
+let _ecResizeBound = false;
+
+// echarts 懒加载：1MB 的库不在首屏加载，第一次需要画图时才拉过来
+function loadEcharts() {
+  if (window.echarts) return Promise.resolve();
+  if (_ecPromise) return _ecPromise;
+  _ecPromise = new Promise(function (resolve, reject) {
+    const s = document.createElement('script');
+    s.src = 'vendor/echarts.min.js';
+    s.async = true;
+    let settled = false;
+    function ok() { if (settled) return; settled = true; window.echarts ? resolve() : reject(new Error('echarts 加载后未挂载')); }
+    function no(m) { if (settled) return; settled = true; reject(new Error(m)); }
+    s.onload = ok;
+    s.onerror = function () { no('echarts 加载失败（vendor/echarts.min.js）'); };
+    setTimeout(function () { no('echarts 加载超时'); }, 20000);
+    document.head.appendChild(s);
+  });
+  return _ecPromise;
+}
+
 function ensureChart() {
   if (chart) return chart;
   chart = echarts.init($('chart'));
-  window.addEventListener('resize', () => chart && chart.resize());
+  if (!_ecResizeBound) {
+    _ecResizeBound = true;
+    // iOS 旋转屏幕 / 键盘弹出会连发多次 resize → 合并成一次，避免反复重排卡顿
+    let rt = null;
+    window.addEventListener('resize', function () {
+      if (rt) clearTimeout(rt);
+      rt = setTimeout(function () { if (chart) chart.resize(); }, 160);
+    }, { passive: true });
+    window.addEventListener('orientationchange', function () {
+      if (rt) clearTimeout(rt);
+      rt = setTimeout(function () { if (chart) chart.resize(); }, 300);
+    }, { passive: true });
+  }
   return chart;
 }
 
@@ -1092,6 +1218,12 @@ function renderChart(d, resetZoom) {
   const volColors = kline.map(k => k[1] >= k[0] ? 'rgba(224,52,46,.55)' : 'rgba(10,158,92,.55)');
   const boll = d.boll || {};
 
+  // 库还没到 → 先拉，加载完自动重画一次；首屏因此不必等这 1MB
+  if (!window.echarts) {
+    loadEcharts().then(function () { renderChart(d, resetZoom); })
+      .catch(function (err) { $('chartMeta').textContent = 'K线库加载失败：' + err.message; });
+    return;
+  }
   ensureChart();
   const option = {
     animation: false,
@@ -1464,7 +1596,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.2.7';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.2.8';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2637,6 +2769,58 @@ function applySchedule() {
   }
 }
 
+// ==================== 手机端快捷跳转（粘顶条 + 回到顶部）====================
+(function initJump() {
+  const bar = $('jump');
+  if (!bar) return;
+  const btns = Array.prototype.slice.call(bar.querySelectorAll('.jump-btn[data-go]'));
+  if (!btns.length) return;
+
+  // 点击某一段时高亮对应按钮
+  let flashTimer = null;
+  function flash(btn) {
+    btns.forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => btn.classList.remove('on'), 1200);
+  }
+
+  btns.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const el = document.getElementById(btn.dataset.go);
+      if (!el) return;
+      flash(btn);
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+      catch (e) { el.scrollIntoView(); }
+    });
+  });
+
+  const top = $('toTop');
+  if (top) top.addEventListener('click', function () {
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) { window.scrollTo(0, 0); }
+  });
+
+  // 滚动时用 IntersectionObserver 同步高亮（被动，不参与滚动主线程）
+  if ('IntersectionObserver' in window) {
+    const map = {};
+    btns.forEach(b => { map[b.dataset.go] = b; });
+    const io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        const btn = map[en.target.id];
+        if (!btn) return;
+        if (en.isIntersecting) {
+          btns.forEach(b => b.classList.remove('on'));
+          btn.classList.add('on');
+        }
+      });
+    }, { rootMargin: '-70px 0px -70% 0px', threshold: 0 });
+    Object.keys(map).forEach(id => {
+      const el = document.getElementById(id);
+      if (el) io.observe(el);
+    });
+  }
+})();
+
 // ==================== 启动 ====================
 (function () {
   const tag = APP_VER + ' · ' + (USE_BACKEND ? '本机后端模式' : '静态直连模式');
@@ -2694,7 +2878,14 @@ try { startScan60(); } catch (e) { console.error('startScan60 failed', e); }
 load();
 try { if (!marketClosed() && watchSet.size) midBandScan(); } catch (e) { console.error('midBandScan failed', e); }
 // 恢复上次选中的转债
-try { if (curCode) loadKline(curCode); } catch (e) { console.error('restore kline failed', e); }
+// 恢复上次查看的 K 线：推迟到首屏渲染之后再拉（echarts 有 1MB，别挡住表格出现）
+try {
+  if (curCode) {
+    const kick = function () { try { loadKline(curCode); } catch (e) { console.error('restore kline failed', e); } };
+    if (window.requestIdleCallback) requestIdleCallback(kick, { timeout: 1500 });
+    else setTimeout(kick, 600);
+  }
+} catch (e) { console.error('restore kline failed', e); }
 </script>
 </body>
 </html>
