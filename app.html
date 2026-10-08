@@ -205,10 +205,26 @@
   .rd-flag{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:750;vertical-align:middle;white-space:nowrap;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe}
     /* 进出流水：独立成框（通栏，放在三列下方），不跟池子列表抢空间 */
   .card-feed{margin-top:14px}
+  /* 整日全量 ⇒ 条数可达数百，容器给足高度（内部滚动，不撑长整页） */
   .card-feed .feed-list{
-    max-height:180px;overflow-y:auto;padding:11px 14px;
+    max-height:56vh;overflow-y:auto;padding:11px 14px;
     display:flex;flex-direction:column;gap:5px;
+    overscroll-behavior:contain;
   }
+  .feed-note{font-size:11px;font-weight:600;color:var(--text-3);margin-left:8px}
+  /* 日期切换条：只有存在历史日期时才出现 */
+  .feed-days{
+    display:flex;flex-wrap:wrap;gap:6px;padding:9px 14px 2px;
+    border-bottom:1px dashed var(--border);margin-bottom:4px;
+  }
+  .fd-chip{
+    border:1px solid var(--border);background:#fff;color:var(--text-2);
+    font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;cursor:pointer;
+    font-variant-numeric:tabular-nums;transition:all .15s;
+  }
+  .fd-chip em{font-style:normal;color:var(--text-3);margin-left:4px}
+  .fd-chip.fd-on{background:var(--accent-soft);border-color:#cfdcff;color:var(--accent)}
+  .fd-chip.fd-today{margin-left:auto}
   .feed-item{font-size:12px;line-height:1.6;color:var(--text-2);font-variant-numeric:tabular-nums;
     padding-left:10px;position:relative;word-break:break-all}
   .feed-item::before{content:'';position:absolute;left:0;top:8px;width:4px;height:4px;border-radius:50%;background:var(--text-3)}
@@ -632,9 +648,13 @@
 
   <div class="card card-feed" id="cardFeed">
     <div class="card-hd">
-      <div class="t">5下跌进出流水 <span class="n" id="feedCnt">0</span></div>
-      <button id="feedClear" class="kbtn" title="清空流水">清空</button>
+      <div class="t">5下跌进出流水
+        <span class="n" id="feedCnt">0</span>
+        <span class="feed-note">整日全量 · 一条不删</span>
+      </div>
+      <button id="feedClear" class="kbtn" title="清空当天流水（历史日期不受影响）">清空当天</button>
     </div>
+    <div class="feed-days" id="feedDays" style="display:none"></div>
     <div class="feed-list" id="feedList"></div>
   </div>
 
@@ -1552,37 +1572,117 @@ async function loadRedeem() {
   redeemAt = Date.now() - (ok ? 0 : REDEEM_GAP - 60000);   // 失败 60s 后重试
 }
 
-// ==================== 进出流水（最近 40 条，localStorage 持久化）====================
+// ==================== 进出流水（按天累积，一条不删，localStorage 持久化）====================
 // 为什么要它：剔除是「瞬间」发生的（入池后可能 10 秒内就被剔），事后根本看不见。
 // 有了流水就能当场核对：谁、几点、因为哪条规则、当时的判定数值是多少。
-const LS_FEED = 'cb_feed_v1';
-const FEED_MAX = 40;
-let feedLog = [];
-try { feedLog = JSON.parse(localStorage.getItem(LS_FEED) || '[]') || []; } catch (e) { feedLog = []; }
+//
+// ⭐ 2026-10-08 改：**记录一整天、一条都不删**。
+//   旧口径：只留最近 40 条（FEED_MAX = 40，超出即丢弃最老的）—— 一个活跃交易日进出上百次，
+//           上午的记录到下午就没了，收盘后完全查不到当天全貌。
+//   新口径：**按「自然日」分桶**，当天所有进出全部保留（不限条数）；
+//           跨天自动换新桶，旧的一天原样留在 localStorage 里可翻看。
+//   ⚠️ 唯一的上限是浏览器 localStorage（约 5MB）：一条记录约 90 字节、按一天 300 条算约 27KB，
+//      连存一个月也才 ~0.8MB，实际不会顶到；万一写满（QuotaExceeded）会自动丢弃最老的那一天并重试。
+const LS_FEED = 'cb_feed_v2';          // v2：结构改为「按日期分桶」（旧键 cb_feed_v1 不再使用）
+const FEED_KEEP_DAYS = 30;             // 保留最近 30 个自然日（仅防 localStorage 写满；正常用不到）
+let feedDays = [];                     // [{ d: '2026-10-08', items: [ ... ] }, ...] 最新的在前
+try {
+  const raw = JSON.parse(localStorage.getItem(LS_FEED) || 'null');
+  if (Array.isArray(raw) && raw.length && raw[0] && typeof raw[0] === 'object' && 'd' in raw[0]) {
+    feedDays = raw;
+  }
+} catch (e) { feedDays = []; }
+if (!Array.isArray(feedDays)) feedDays = [];
+
+function todayStr(d) {
+  const x = d || new Date(), p = v => String(v).padStart(2, '0');
+  return x.getFullYear() + '-' + p(x.getMonth() + 1) + '-' + p(x.getDate());
+}
+
+// 取（并按需创建）今天那一天的桶
+function feedBucket() {
+  const t = todayStr();
+  if (!feedDays.length || feedDays[0].d !== t) feedDays.unshift({ d: t, items: [] });
+  return feedDays[0];
+}
+
+function feedSave() {
+  try { localStorage.setItem(LS_FEED, JSON.stringify(feedDays)); }
+  catch (e) {
+    // 写满时：丢掉最老的一天再试，最多退到只剩今天
+    while (feedDays.length > 1) {
+      feedDays.pop();
+      try { localStorage.setItem(LS_FEED, JSON.stringify(feedDays)); return; } catch (e2) {}
+    }
+  }
+}
 
 function codeName(code) {
   const r = allRows.find(x => x.code === code);
-  return (r && r.name) || code;
+  return (r && r.name) || code || '';
 }
 
 function feedPush(code, act, why) {
   const d = new Date(), p = x => String(x).padStart(2, '0');
-  feedLog.unshift({
+  const b = feedBucket();
+  b.items.unshift({
     t: p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()),
     n: codeName(code), a: act, w: why || '',
   });
-  if (feedLog.length > FEED_MAX) feedLog.length = FEED_MAX;
-  try { localStorage.setItem(LS_FEED, JSON.stringify(feedLog)); } catch (e) {}
+  // 只在天数上设上限，**当天条数永不截断**
+  if (feedDays.length > FEED_KEEP_DAYS) feedDays.length = FEED_KEEP_DAYS;
+  feedSave();
   renderFeed();
+}
+
+// 当前展示的那一天（默认今天；点击日期条可回看往日）
+let feedViewDay = null;
+if (feedViewDay === null) feedViewDay = todayStr();
+
+function feedViewItems() {
+  if (feedViewDay === todayStr()) return feedBucket().items;
+  const day = feedDays.find(x => x.d === feedViewDay);
+  return day ? day.items : [];
 }
 
 function renderFeed() {
   const el = $('feedList');
   if (!el) return;
+  const today = todayStr();
+  feedViewDay = feedViewDay || today;
+  const items = feedViewItems();
+
+  // 计数徽标：显示当前查看那天的条数
   const cnt = $('feedCnt');
-  if (cnt) cnt.textContent = feedLog.length;
-  if (!feedLog.length) { el.innerHTML = '<span class="feed-empty">还没有进出记录</span>'; return; }
-  el.innerHTML = feedLog.map(x =>
+  if (cnt) {
+    const n = feedDays.reduce((s, d) => s + d.items.length, 0);
+    cnt.textContent = feedViewDay === today ? n : (n + '（' + feedViewDay + '）');
+  }
+
+  // 日期切换条：有历史才显示
+  const bar = $('feedDays');
+  if (bar) {
+    if (feedDays.length > 1) {
+      bar.style.display = '';
+      bar.innerHTML = feedDays.map(d =>
+        '<button class="fd-chip' + (d.d === feedViewDay ? ' fd-on' : '') + '" data-day="' + d.d + '">' +
+        d.d.slice(5) + '<em>' + d.items.length + '</em></button>').join('') +
+        '<button class="fd-chip fd-today' + (feedViewDay === today ? ' fd-on' : '') +
+        '" data-day="' + today + '">今天</button>';
+    } else {
+      bar.style.display = 'none';
+      bar.innerHTML = '';
+    }
+  }
+
+  if (!items.length) {
+    el.innerHTML = '<span class="feed-empty">' +
+      (feedViewDay === today ? '今天还没有进出记录' : feedViewDay + ' 没有记录') + '</span>';
+    return;
+  }
+
+  // 按时间分段的整日视图：一条不删，全部平铺（容器内滚动）
+  el.innerHTML = items.map(x =>
     '<div class="feed-item ' + (x.a === 'in' ? 'fi-in' : 'fi-out') + '">' +
     '<b>' + x.t + '</b>' + x.n + '<i>' + (x.a === 'in' ? '入池' : '剔除') + '</i>' +
     (x.w ? '<span class="fw">' + x.w + '</span>' : '') + '</div>').join('');
@@ -1596,7 +1696,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.2.8';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.2.9';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2865,9 +2965,29 @@ $('watch60List').addEventListener('click', (ev) => {
   if (main) loadKline(main.dataset.code, null, true, '60m');  // 「60下跌」→ 60 分钟图
 });
 
+// 清空流水：**只清「正在看的那一天」**，其它日期原样保留。
+// 教训：原来是一键清空全部，一旦误点当天记录就没了 —— 而记录一整天正是为了不再丢。
 $('feedClear').addEventListener('click', () => {
-  feedLog = [];
-  try { localStorage.removeItem(LS_FEED); } catch (e) {}
+  const t = feedViewDay || todayStr();
+  const label = (t === todayStr()) ? '今天' : t;
+  const cnt = feedViewItems().length;
+  if (!cnt) { return; }
+  if (!confirm('清空 ' + label + ' 的 ' + cnt + ' 条流水记录？\n（其它日期的记录不受影响）')) return;
+  const idx = feedDays.findIndex(x => x.d === t);
+  if (idx >= 0) {
+    if (t === todayStr()) { feedDays[idx].items = []; }
+    else { feedDays.splice(idx, 1); }          // 历史某天清空 = 直接移除该天
+  }
+  feedSave();
+  if (t !== todayStr()) feedViewDay = todayStr();
+  renderFeed();
+});
+
+// 日期切换：点 chip 回看那一天的完整流水
+$('feedDays').addEventListener('click', (ev) => {
+  const chip = ev.target.closest('.fd-chip');
+  if (!chip) return;
+  feedViewDay = chip.dataset.day;
   renderFeed();
 });
 try { renderFeed(); } catch (e) { console.error('renderFeed failed', e); }
