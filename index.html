@@ -1696,7 +1696,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.2.9';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.3.0';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -1905,24 +1905,72 @@ let   _quoteReqBudget = 0;         // 本轮行情剩余可发请求数（防轰
 //    `if (!batch.length) break;` 会把它当成「清单为空」静默返回 []，于是整页没数据、
 //    却还在显示「正在首次拉取…」，一点线索都不留。
 //    现在：① 单页失败重试一次；② 首页就为空 → 抛错（不再静默）；③ 抛错时回退到同源快照。
+//
+// ⛔⛔ 2026-10-08 手机端事故（老大反馈「Load failed」）：**不能只靠这个远程接口**。
+//    实测 `reportName=RPT_BOND_CB_LIST&columns=ALL` 会返回 **3.1MB（含全部已退市历史）**、
+//    耗时 **19~20 秒**。手机（4G/5G）上这点体积/耗时会被系统直接掐断，Safari 报 `Load failed`；
+//    而旧代码是 **同步等远程** → 白等 20 秒 → 抛错 → **才**去读快照，手机早看不到希望了。
+//    ⇒ 新策略（v1.3.0）：
+//      ① **快照优先**：同源 `cb_list.json`（11KB / 320 只存续债，毫秒级）先拿来就把页面点起来；
+//      ② 远程清单**只在后台静默补**：带**超时**（`CB_LIST_TIMEOUT`），成功且条数更多才替换；
+//      ③ **列裁剪**：只请求需要的 3 个字段，别拉 `columns=ALL`（3.1MB → 约 40KB）。
 const CB_LIST_PAGE = 500;
+const CB_LIST_TIMEOUT = 5000;             // 单页远程清单超时（毫秒）——手机端等不起
+// ⭐ 远程清单的**总时限**：快照优先架构下，远程只是「后台补」，不值得让用户多等一秒。
+//    超了就直接放弃（快照已经能用了），所以给得比单次超时只多一点。
+const CB_LIST_BUDGET = 7000;
+const CB_LIST_COLS = 'SECURITY_CODE,SECURITY_NAME_ABBR,CONVERT_STOCK_CODE,DELIST_DATE';
 const CB_LIST_SNAPSHOT = 'cb_list.json';   // 与 app.html 同目录的快照（静态托管时随站点一起发布）
 
-async function fetchCbListRemote() {
+// 带超时的 fetch（手机端必须给上限，否则会被系统掐成 `Load failed` 且拿不到原因）
+function fetchWithTimeout(url, timeoutMs, opts) {
+  const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  let timer = null;
+  const to = new Promise((_, rej) => {
+    timer = setTimeout(() => {
+      if (ctrl) { try { ctrl.abort(); } catch (e) {} }
+      rej(new Error('超时 ' + timeoutMs + 'ms'));
+    }, timeoutMs);
+  });
+  const req = fetch(url, Object.assign({ signal: ctrl ? ctrl.signal : undefined }, opts || {}));
+  return Promise.race([req, to]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
+async function fetchCbListSnapshot() {
+  const res = await fetchWithTimeout(CB_LIST_SNAPSHOT, CB_LIST_TIMEOUT);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const j = await res.json();
+  const arr = (j && j.list) || [];
+  return arr.map(x => ({ code: String(x[0]), name: x[1] || '', stock: x[2] || '' }));
+}
+
+async function fetchCbListRemote(deadlineMs) {
   const rows = [];
+  const t0 = Date.now();
+  const budget = deadlineMs || CB_LIST_BUDGET;   // 整个远程流程的总时限
   let page = 1, count = null;
   for (;;) {
-    const url = EM_LIST_URL + '?reportName=RPT_BOND_CB_LIST&columns=ALL&pageNumber=' + page
+    // ⭐ 只取需要的 4 列（拿 DELIST_DATE 用于过滤退市）。columns=ALL 会返回 3.1MB、耗时 20 秒。
+    const url = EM_LIST_URL + '?reportName=RPT_BOND_CB_LIST&columns=' + encodeURIComponent(CB_LIST_COLS)
+              + '&pageNumber=' + page
               + '&pageSize=' + CB_LIST_PAGE + '&sortColumns=SECURITY_CODE&sortTypes=1&source=WEB&client=WEB';
     let j = null, lastErr = null;
-    for (let attempt = 0; attempt < 2 && !j; attempt++) {
+    // 总时限用掉一半就不要再重试了（手机端等不起第二轮）
+    const used = Date.now() - t0;
+    const maxAttempt = (used + CB_LIST_TIMEOUT <= budget) ? 2 : 1;
+    for (let attempt = 0; attempt < maxAttempt && !j; attempt++) {
+      // 每次请求的超时 = 剩余预算（别让单次请求超出总时限）
+      const left = budget - (Date.now() - t0);
+      if (left <= 300) break;
       try {
-        const res = await fetch(url);
+        const res = await fetchWithTimeout(url, Math.min(CB_LIST_TIMEOUT, left));
         if (!res.ok) throw new Error('HTTP ' + res.status);
         j = await res.json();
       } catch (e) {
         lastErr = e;
-        if (attempt === 0) await new Promise(r => setTimeout(r, 700));   // 抖一下再试一次
+        // AbortError / 超时 一律转成看得懂的中文
+        if (/abort/i.test(e && e.name) || /abort/i.test(e && e.message)) lastErr = new Error('超时');
+        if (attempt === 0 && maxAttempt > 1) await new Promise(r => setTimeout(r, 700));   // 抖一下再试一次
       }
     }
     if (!j) throw new Error((lastErr && lastErr.message) || '请求失败');
@@ -1935,7 +1983,9 @@ async function fetchCbListRemote() {
     if (count == null) count = r.count;
     rows.push(...batch);
     if ((count && rows.length >= count) || batch.length < CB_LIST_PAGE) break;
+    if (Date.now() - t0 > budget) break;       // 翻页也要看总时限
     page++;
+    if (page > 6) break;                       // 兜底：别无限翻页
   }
   return rows.filter(r => !r.DELIST_DATE).map(r => ({
     code: String(r.SECURITY_CODE),
@@ -1944,25 +1994,50 @@ async function fetchCbListRemote() {
   }));
 }
 
+// ⭐ 快照优先、远程后台补：**手机端能不能秒开就看这个函数**
 async function fetchCbList() {
   if (_cbListCache.data && Date.now() - _cbListCache.ts < 6 * 3600 * 1000) return _cbListCache.data;
+
+  // ① 先拿同源快照（11KB，毫秒级）—— 拿到就立刻可用，绝不阻塞在 3MB 的远程接口上
+  let snap = null, snapErr = null;
+  try { snap = await fetchCbListSnapshot(); }
+  catch (e) { snapErr = e; }
+
+  if (snap && snap.length) {
+    _cbListCache.data = snap; _cbListCache.ts = Date.now();
+    // ② 远程清单放到后台静默补（成功且更全才替换，失败完全无感）
+    fetchCbListRemote().then(remote => {
+      if (remote && remote.length > snap.length) {
+        _cbListCache.data = remote; _cbListCache.ts = Date.now();
+        try { refreshListNames(); } catch (e) {}   // 名字/正股有更新则刷一遍显示
+      }
+    }).catch(() => { /* 后台补失败不影响使用 */ });
+    return snap;
+  }
+
+  // ③ 快照也没有（比如本机后端模式、或快照被删）→ 只能等远程，但至少带上超时与重试
   let alive = null, remoteErr = null;
   try { alive = await fetchCbListRemote(); }
   catch (e) { remoteErr = e; }
   if (!alive || !alive.length) {
-    // 兜底：同源快照（同源请求，不涉及 CORS；上游挂了也还能用）
-    try {
-      const res = await fetch(CB_LIST_SNAPSHOT);
-      if (res.ok) {
-        const j = await res.json();
-        const arr = (j && j.list) || [];
-        if (arr.length) alive = arr.map(x => ({ code: String(x[0]), name: x[1] || '', stock: x[2] || '' }));
-      }
-    } catch (e) { /* 没有快照就算了 —— 下面统一抛错 */ }
+    throw new Error('可转债清单获取失败' + (remoteErr ? '：' + remoteErr.message
+      : (snapErr ? '：快照不可用（' + snapErr.message + '）' : '')));
   }
-  if (!alive || !alive.length) throw new Error('可转债清单获取失败' + (remoteErr ? '：' + remoteErr.message : ''));
   _cbListCache.data = alive; _cbListCache.ts = Date.now();
   return alive;
+}
+
+// 清单名称/正股更新后，把已渲染的表格与池子标题里的旧名刷一遍（不重拉行情）
+function refreshListNames() {
+  if (!allRows || !allRows.length) return;
+  const meta = new Map((_cbListCache.data || []).map(b => [b.code, b]));
+  let dirty = false;
+  allRows.forEach(r => {
+    const m = meta.get(r.code);
+    if (m && m.name && m.name !== r.name) { r.name = m.name; dirty = true; }
+    if (m && m.stock && m.stock !== r.stock) { r.stock = m.stock; dirty = true; }
+  });
+  if (dirty) { scheduleRender(); try { renderWatch(); render60(); } catch (e) {} }
 }
 
 // 市场状态：与后端 market_status() 同口径，改用本地时钟
