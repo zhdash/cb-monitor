@@ -36,12 +36,32 @@ _GZ_MIN = 1024                     # 小于 1KB 不压缩（省得白忙）
 # ==================== ① 首页 → 美化版 app.html ====================
 _orig_do_GET = server.Handler.do_GET
 
+# ⭐ 静态别名（2026-10-11 补）：
+# 背景 —— 云端「Python 模式」部署时跑的是 server.py 的路由，而它**只认**
+#   `/`、`/index.html`、`/vendor/*`、`/api/*`，其余一律 404 "not found"。
+# 后果（2026-10-11 真实事故）：线上 `/app.html`（老大手机书签）与 `/cb_list.json`
+#   （v1.3.0 的「快照优先」数据源、手机端兜底）双双 404 —— 页面看着还在，兜底没了。
+# ⇒ 这里把这三个常用文件挂成显式路由，两种部署模式（静态 / Python）都能命中。
+_STATIC_ALIAS = {
+    "/app.html":     ("app.html",     "text/html; charset=utf-8"),
+    "/cb_list.json": ("cb_list.json", "application/json; charset=utf-8"),
+    "/diag.html":    ("diag.html",    "text/html; charset=utf-8"),
+}
+
 
 def _do_GET(self):
     path_only = urllib.parse.urlparse(self.path).path
     if path_only in ("/", "/index.html"):
         fp = PAGE if os.path.isfile(PAGE) else os.path.join(BASE, "index.html")
         self._serve_file(fp, "text/html; charset=utf-8")
+        return
+    if path_only in _STATIC_ALIAS:
+        name, ctype = _STATIC_ALIAS[path_only]
+        fp = os.path.join(BASE, name)
+        if os.path.isfile(fp):
+            self._serve_file(fp, ctype)
+            return
+        self._send(404, b"not found", "text/plain; charset=utf-8")
         return
     if path_only.startswith("/api/klines60"):
         self._api_klines60()
