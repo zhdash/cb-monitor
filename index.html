@@ -200,8 +200,8 @@
 
   /* ---------- 中轨标记 / 闪烁 ---------- */
   .mid-badge{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:750;vertical-align:middle;white-space:nowrap}
-  .mid-badge.live{background:#f59e0b;color:#fff;animation:midPulse 1.7s ease-out infinite}
-  .mid-badge.past{background:#fdf3e3;color:#b45309}
+  /* ⭐ v1.3.1：触中轨 与 中轨下方 **共用同一个标记**（不再分 live/past 两种样式） */
+  .mid-badge.on{background:#f59e0b;color:#fff}
   .rd-flag{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:750;vertical-align:middle;white-space:nowrap;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe}
     /* 进出流水：独立成框（通栏，放在三列下方），不跟池子列表抢空间 */
   .card-feed{margin-top:14px}
@@ -603,7 +603,7 @@
         <button id="watchClear" class="kbtn" title="清空自选">清空</button>
       </div>
       <div class="watch-auto">
-        <label class="auto-wrap" title="全部只按「已收盘」的 5 分钟 K 线判断，正在走的那根不参与（每 10 秒复核，每 5 分钟一轮选股；收盘后自动暂停扫描）。入池：成交额前 20 里，5 分钟 K 线一路不出现上涨（走平不算中断），这段里只要有 2 根的单根跌幅超过 0.25%；涨破出局：入池后任一根已收盘 K 线收 > 前一根收；破位出局：入池后（且 10:15 后）任一根已收盘的「下跌」K 线最低价跌破【入池时的日内低点】（收盘价不必也在新低）；中轨打标：已收盘 K 线下跌且触及 5 分钟布林中轨；掉出成交额前 20 也剔除。">
+        <label class="auto-wrap" title="全部只按「已收盘」的 5 分钟 K 线判断，正在走的那根不参与（每 10 秒复核，每 5 分钟一轮选股；收盘后自动暂停扫描）。入池：成交额前 20 里，5 分钟 K 线一路不出现上涨（走平不算中断），这段里只要有 2 根的单根跌幅超过 0.25%；涨破出局：入池后任一根已收盘 K 线收 > 前一根收；破位出局：入池后（且 10:15 后）任一根已收盘的「下跌」K 线最低价跌破【入池时的日内低点】（收盘价不必也在新低）；中轨打标：已收盘 5 分钟 K 线「下跌」触及 5 分钟布林中轨，或收盘落在中轨下方 —— 两者用同一种橙色标记；掉出成交额前 20 也剔除。">
           <input type="checkbox" id="autoWatch" checked> 自动监控
         </label>
         <button id="autoScan" class="kbtn" title="立即扫描一次">立即扫描</button>
@@ -663,7 +663,7 @@
     点击表头可按代码/名称/现价/涨跌幅/成交额/成交量排序；搜索框可全市场检索；刷新间隔可设置（默认 10 秒）并自动记忆。<br>
     <b>两个池都只收「成交额前 20」里的债：一旦掉出前 20，立即剔除。</b><br>
     <b>已公布强赎的债不进这两个池</b>（已在池内的会被移出；名单来自东财、每 30 分钟刷新；全市场明细表中以「强赎」小标提示）。<br>
-    <b>「5下跌」</b>（每 10 秒扫描：入池与剔除同一节奏，<b>只认已收盘</b>的 K 线；<b>收盘后自动暂停扫描</b>，点「立即扫描」可手动跑一次）：<b>一路不出现上涨</b>（走平不算中断）且这段里<b>有 2 根跌幅超过 0.25%</b> 即入池（<b>列表按这个根数降序，越多越靠前</b>）；池内出现任一根已收盘 K 线收 &gt; 前一根收、或<b>入池之后</b>（且 10:15 后）<b>「下跌」的那根最低价跌破入池时的日内低点</b>（收盘价不必也在新低），即剔除；下跌触及 <b>5 分钟</b>布林中轨以橙色「⚡5分中轨」标记。<br>
+    <b>「5下跌」</b>（每 10 秒扫描：入池与剔除同一节奏，<b>只认已收盘</b>的 K 线；<b>收盘后自动暂停扫描</b>，点「立即扫描」可手动跑一次）：<b>一路不出现上涨</b>（走平不算中断）且这段里<b>有 2 根跌幅超过 0.25%</b> 即入池（<b>列表按这个根数降序，越多越靠前</b>）；池内出现任一根已收盘 K 线收 &gt; 前一根收、或<b>入池之后</b>（且 10:15 后）<b>「下跌」的那根最低价跌破入池时的日内低点</b>（收盘价不必也在新低），即剔除；「下跌」触及 <b>5 分钟</b>布林中轨、<b>或收盘落在 5 分钟布林中轨下方</b>，统一以橙色「⚡5分中轨」标记（同一种标记，悬停可看是哪种原因）。<br>
     <b>「60下跌」</b>（每 1 分钟复核，<b>不等收盘</b>；<b>收盘后自动暂停复核</b>）：最新一根 60 分钟 K 线跌超 1.9%、且当天<b>没碰到过、也没跌到 <b>60 分钟</b>布林中轨下方</b>、且<b>当天除第一根外的「下跌」K 线没有触及当天最高价</b>的债才留在池内；跌幅收窄到 1.9% 以内、当天碰到/跌破 60 分钟布林中轨、或有下跌 K 线触及当天最高价，立即剔除。<br>
     <b>注意</b>：两个池说的「中轨」<b>不是同一条线</b>——分别是 5 分钟与 60 分钟的布林中轨。点「5下跌」列表自动看 5 分钟 K 线，点「60下跌」列表自动看 60 分钟 K 线，也可用图表右上角手动切换。<br>
     <span id="appVer" style="font-size:11px;color:var(--text-3)"></span>
@@ -1696,7 +1696,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.3.0';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.3.1';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2425,12 +2425,16 @@ function dayLowBreak(d, entry) {
   return null;
 }
 
-// ==================== 布林中轨触及监控（只认「下跌触中轨」）====================
-// 判定口径：某根 5 分钟 K 线「下跌」（收 < 前一根收）且其高低区间 [low, high] 覆盖布林中轨(MA20)，
-// 即 low <= 中轨 <= high —— 下跌过程中碰到/穿过中轨，才是要特别标记的信号（上涨碰到不算）。
+// ==================== 布林中轨监控（「触中轨」与「中轨下方」统一打标）====================
+// 判定口径（v1.3.1 起 —— 老大 2026-11-09 定：两种情形用【同一种标记】）：
+//   ① **触中轨**：某根 5 分钟 K 线「下跌」（收 < 前一根收）且其高低区间 [low, high] 覆盖中轨(MA20)，
+//      即 low <= 中轨 <= high —— 下跌过程中碰到/穿过中轨。
+//   ② **中轨下方**：已收盘 K 线的**收盘价 < 中轨**（这是持续状态，不要求那根是下跌）。
+//   ⭐ 两者都打**同一个**橙色「⚡5分中轨」标记，不再分「⚡ / 曾触」两种样式；
+//      具体是哪种原因写在悬停提示（title）里。
 const MID_TAIL = 8;              // 判定只需最后几根，压缩载荷
 const MID_WIN = 10000;           // 每 10 秒核对一次（自选池：涨破 + 破位 + 中轨 合并一次遍历）
-let midTouch = new Map();        // code -> {t:'HH:MM', live:bool}；live=false 表示"曾触及"
+let midTouch = new Map();        // code -> {t:'HH:MM', kind:'touch'|'below', live:bool}
 let midScanBusy = false;
 // ⭐ 自动入池的「等待上涨」闸门：某只债被自动剔除后，必须等它先出现一根【上涨】的
 //    5 分钟 K 线，才允许重新入池（2026-09-28 老大定：
@@ -2466,17 +2470,36 @@ function dropTouchesMidAt(d, i) {
   return low <= mid && mid <= high;
 }
 
-// 最近窗口内最近一次「下跌触中轨」；返回 {t:'HH:MM', live:bool} 或 null
-function recentDropToMid(d) {
+// 第 i 根的「中轨状态」：'touch'（下跌且触/穿中轨）| 'below'（收盘落在中轨下方）| null
+// ⭐ 触中轨优先判定 —— 它比「下方」更具体（同时满足时按「触中轨」解释）
+function midZoneAt(d, i) {
+  const k = d && d.kline, b = d && d.boll;
+  if (!k || !b || !b.mid || i < 1 || i >= k.length) return null;
+  const mid = b.mid[i];
+  if (mid == null) return null;
+  const close = k[i][1], low = k[i][2], high = k[i][3];
+  if (close < k[i - 1][1] && low <= mid && mid <= high) return 'touch';
+  if (close < mid) return 'below';
+  return null;
+}
+
+// 当前中轨标记：① 最新已收盘那根满足「触中轨/中轨下方」→ live；
+//               ② 否则回看最近 MID_LOOKBACK 根里有没有「触中轨」（抗页面刷新）。
+// 返回 {t:'HH:MM', kind:'touch'|'below', live:bool} 或 null
+function recentMidState(d) {
   const k = d && d.kline, ts = d && d.times;
   if (!k || !ts || k.length < 2) return null;
   const end = lastClosedIdx(d);                // 只看已收盘的 K 线
   if (end < 1) return null;
   const lastDay = dayOf(ts[k.length - 1]);
+  if (dayOf(ts[end]) === lastDay) {
+    const cur = midZoneAt(d, end);
+    if (cur) return { t: hmOf(ts[end]), kind: cur, live: true };
+  }
   for (let i = end; i >= Math.max(1, end - MID_LOOKBACK + 1); i--) {
     if (dayOf(ts[i]) !== lastDay) continue;
     if (dropTouchesMidAt(d, i)) {
-      return { t: hmOf(ts[i]), live: (i === end) };
+      return { t: hmOf(ts[i]), kind: 'touch', live: false };
     }
   }
   return null;
@@ -2484,11 +2507,12 @@ function recentDropToMid(d) {
 
 // 5 分钟图的提示（「5下跌」池的中轨 = 5 分钟布林中轨）
 function midMetaText(d) {
-  const r = recentDropToMid(d);
+  const r = recentMidState(d);
   if (!r) return '';
+  const why = (r.kind === 'below') ? '收盘在 5 分钟中轨下方' : '「下跌」触及 5 分钟中轨';
   return r.live
-    ? ' · ⚡最新已收盘 5 分钟 K 线「下跌」触 5 分钟中轨'
-    : ' · 曾「下跌」触 5 分钟中轨 @' + r.t;
+    ? ' · ⚡最新已收盘 5 分钟 K 线' + why
+    : ' · 最近' + why + ' @' + r.t;
 }
 
 // 60 分钟图的提示（「60下跌」池的中轨 = 60 分钟布林中轨，和上面那条不是同一条线）
@@ -2499,18 +2523,19 @@ function midMetaText60(d) {
     + (hitDayHigh60Today(d) ? ' · 有下跌 K 线触及当天最高价' : '');
 }
 
+// 统一标记：触中轨 / 中轨下方 都是同一个橙色「⚡5分中轨」，原因写进 title
 function paintMidTag(el, rec) {
   if (!el) return;
   if (!rec) {
     if (el.textContent) { el.textContent = ''; el.className = 'mid-tag'; el.title = ''; }
     return;
   }
-  const txt = rec.live ? '⚡5分中轨' : '曾触5分中轨';
+  const txt = '⚡5分中轨';
   if (el.textContent !== txt) el.textContent = txt;
-  const want = 'mid-badge ' + (rec.live ? 'live' : 'past');
-  if (el.className !== want) el.className = want;
-  el.title = (rec.live ? '最新已收盘的 5 分钟 K 线「下跌」触及 5 分钟布林中轨'
-                       : '最近曾「下跌」触及 5 分钟布林中轨') + ' \u00b7 ' + rec.t;
+  if (el.className !== 'mid-badge on') el.className = 'mid-badge on';
+  el.title = (rec.kind === 'below' ? '5 分钟 K 线收盘在布林中轨下方'
+                                   : '5 分钟 K 线「下跌」触及布林中轨')
+           + ' \u00b7 ' + (rec.live ? '最新已收盘那根 ' : '曾 ') + rec.t;
 }
 
 async function midBandScan() {
@@ -2535,14 +2560,10 @@ async function midBandScan() {
       const d = map && map[code];
       if (!d || d.error || !d.kline) return;
       watchStrong.set(code, strongDownCount(d));     // 排序依据：这段连跌里跌超 0.25% 的根数
-      // 中轨标记
-      const mtRec = recentDropToMid(d);
-      if (mtRec) {
-        midTouch.set(code, mtRec);
-      } else {
-        const old = midTouch.get(code);
-        if (old && old.live) midTouch.set(code, { t: old.t, live: false });
-      }
+      // 中轨标记：触中轨 / 收在中轨下方 —— 同一种标记
+      const mtRec = recentMidState(d);
+      if (mtRec) midTouch.set(code, mtRec);
+      else midTouch.delete(code);                    // 既没触、也不在下方 → 撤掉标记（不留陈旧标记）
       if (lodOn && watchSet.has(code)) {
         // 剔除①「涨破」（优先）：自选期间出现过任一根上涨 K 线 → 立刻剔除
         const rr = hasRisenSince(d, watchEntry[code]);
