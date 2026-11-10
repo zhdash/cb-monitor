@@ -1696,7 +1696,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.3.2';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.3.3';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -1919,6 +1919,9 @@ const CB_LIST_TIMEOUT = 5000;             // 单页远程清单超时（毫秒�
 // ⭐ 远程清单的**总时限**：快照优先架构下，远程只是「后台补」，不值得让用户多等一秒。
 //    超了就直接放弃（快照已经能用了），所以给得比单次超时只多一点。
 const CB_LIST_BUDGET = 7000;
+// ⭐ 清单后台校准间隔：新债上市当天要能及时进来，别等 6 小时缓存过期
+const CB_LIST_REMOTE_GAP = 20 * 60 * 1000;   // 20 分钟
+let   _cbListRemoteTs = 0;                   // 上次后台校准远程清单的时刻
 const CB_LIST_COLS = 'SECURITY_CODE,SECURITY_NAME_ABBR,CONVERT_STOCK_CODE,DELIST_DATE';
 const CB_LIST_SNAPSHOT = 'cb_list.json';   // 与 app.html 同目录的快照（静态托管时随站点一起发布）
 
@@ -1934,6 +1937,40 @@ function fetchWithTimeout(url, timeoutMs, opts) {
   });
   const req = fetch(url, Object.assign({ signal: ctrl ? ctrl.signal : undefined }, opts || {}));
   return Promise.race([req, to]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
+// 两个清单的「代码集合」是否完全一致（顺序无关、名称变动不算变化）
+function sameCodes(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  const s = new Set(b.map(x => x.code));
+  for (let i = 0; i < a.length; i++) if (!s.has(a[i].code)) return false;
+  return true;
+}
+
+// 是否用「远程清单」替换「当前清单」
+//   ① 远程为空 → 不动（别把页面清空）
+//   ② 当前为空 → 直接用远程
+//   ③ 远程比当前少 20% 以上 → 视为上游返回残缺，不动（防抖动把清单打薄）
+//   ④ 代码集合不同 → 替换（**新增/退市/换名** 都算变化）
+// ⛔ 不要退回「比条数大小」：新增与退市互相抵消时条数不变，但清单已经变了。
+function shouldReplaceList(fresh, cur) {
+  if (!fresh || !fresh.length) return false;
+  if (!cur || !cur.length) return true;
+  if (fresh.length < cur.length * 0.8) return false;
+  return !sameCodes(fresh, cur);
+}
+
+// 后台校准：按 CB_LIST_REMOTE_GAP 节流，避免每次轮询都打上游
+function maybeRefreshListInBackground() {
+  if (Date.now() - _cbListRemoteTs < CB_LIST_REMOTE_GAP) return;
+  _cbListRemoteTs = Date.now();
+  fetchCbListRemote().then(remote => {
+    const cur = _cbListCache.data || [];
+    if (!shouldReplaceList(remote, cur)) return;
+    _cbListCache.data = remote; _cbListCache.ts = Date.now();
+    _quotesCache = { ts: 0, data: null };
+    try { load(); } catch (e) {}        // 清单变了立刻换一份行情（新债当场出现）
+  }).catch(() => { /* 静默：下个周期再试 */ });
 }
 
 async function fetchCbListSnapshot() {
@@ -1996,7 +2033,10 @@ async function fetchCbListRemote(deadlineMs) {
 
 // ⭐ 快照优先、远程后台补：**手机端能不能秒开就看这个函数**
 async function fetchCbList() {
-  if (_cbListCache.data && Date.now() - _cbListCache.ts < 6 * 3600 * 1000) return _cbListCache.data;
+  if (_cbListCache.data && Date.now() - _cbListCache.ts < 6 * 3600 * 1000) {
+    maybeRefreshListInBackground();      // 缓存有效也每 20 分钟跟上游对一次（新债当天就能进来）
+    return _cbListCache.data;
+  }
 
   // ① 先拿同源快照（11KB，毫秒级）—— 拿到就立刻可用，绝不阻塞在 3MB 的远程接口上
   let snap = null, snapErr = null;
@@ -2005,12 +2045,18 @@ async function fetchCbList() {
 
   if (snap && snap.length) {
     _cbListCache.data = snap; _cbListCache.ts = Date.now();
-    // ② 远程清单放到后台静默补（成功且更全才替换，失败完全无感）
+    // ② 远程清单放到后台静默补（有变化才替换，失败完全无感）
+    // ⛔⛔ 2026-11-10 修：原来判的是 `remote.length > snap.length` —— **只要新上市数 ≤ 退市数，
+    //     条件就永远不成立**，快照会一直卡住、新债永远进不来（真实事故：快照 319 / 远程 318，
+    //     新上 7 只、退掉 8 只，净减 1 ⇒ 线上 7 只新债全部缺席）。
+    //     改为「**代码集合不同就替换**」，并用「远程 < 现有 80% 视为上游残缺，不动」兜底。
+    _cbListRemoteTs = Date.now();
     fetchCbListRemote().then(remote => {
-      if (remote && remote.length > snap.length) {
-        _cbListCache.data = remote; _cbListCache.ts = Date.now();
-        try { refreshListNames(); } catch (e) {}   // 名字/正股有更新则刷一遍显示
-      }
+      const cur = _cbListCache.data || [];
+      if (!shouldReplaceList(remote, cur)) return;
+      _cbListCache.data = remote; _cbListCache.ts = Date.now();
+      _quotesCache = { ts: 0, data: null };     // 清单变了 → 行情缓存作废
+      try { load(); } catch (e) {}              // 立刻重拉一轮行情：**新债当场出现**，不用等下一轮
     }).catch(() => { /* 后台补失败不影响使用 */ });
     return snap;
   }
@@ -2027,18 +2073,8 @@ async function fetchCbList() {
   return alive;
 }
 
-// 清单名称/正股更新后，把已渲染的表格与池子标题里的旧名刷一遍（不重拉行情）
-function refreshListNames() {
-  if (!allRows || !allRows.length) return;
-  const meta = new Map((_cbListCache.data || []).map(b => [b.code, b]));
-  let dirty = false;
-  allRows.forEach(r => {
-    const m = meta.get(r.code);
-    if (m && m.name && m.name !== r.name) { r.name = m.name; dirty = true; }
-    if (m && m.stock && m.stock !== r.stock) { r.stock = m.stock; dirty = true; }
-  });
-  if (dirty) { scheduleRender(); try { renderWatch(); render60(); } catch (e) {} }
-}
+// ⚠️ 原 refreshListNames() 已删（v1.3.3）：清单变化后直接 load() 重拉一轮行情，
+//    新债能当场出现；只刷名字反而漏掉「新增/退市」的代码。
 
 // 市场状态：与后端 market_status() 同口径，改用本地时钟
 function localMarketStatus() {
