@@ -251,7 +251,10 @@
   /* ---------- 自选 ---------- */
   .watch-auto{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border-2);background:#fbfcfe;flex-wrap:wrap}
   .auto-wrap{font-size:12px;color:var(--text-2);display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
-  .auto-wrap input{accent-color:var(--accent);width:14px;height:14px}
+  /* 常开状态标签：不可点（原来的 checkbox 已移除），绿点表示正在监控 */
+  .auto-wrap.auto-on{cursor:default;font-weight:700;font-size:11px;color:#1d4ed8;
+    background:#eef4ff;border:1px solid #cfdcff;padding:2px 9px 2px 8px;border-radius:999px}
+  .auto-wrap.auto-on::before{content:'';width:6px;height:6px;border-radius:50%;background:#22b573;flex:0 0 auto}
   .auto-info{font-size:11px;color:var(--text-3);margin-left:auto}
   .watch-list{overflow-y:auto;max-height:640px;flex:1;padding:9px}
   .watch-col .watch-list{max-height:none;min-height:110px}
@@ -603,9 +606,10 @@
         <button id="watchClear" class="kbtn" title="清空自选">清空</button>
       </div>
       <div class="watch-auto">
-        <label class="auto-wrap" title="全部只按「已收盘」的 5 分钟 K 线判断，正在走的那根不参与（每 10 秒复核，每 5 分钟一轮选股；收盘后自动暂停扫描）。入池：成交额前 20 里，5 分钟 K 线一路不出现上涨（走平不算中断），这段里只要有 2 根的单根跌幅超过 0.25%；涨破出局：入池后任一根已收盘 K 线收 > 前一根收；破位出局：入池后（且 10:15 后）任一根已收盘的「下跌」K 线最低价跌破【入池时的日内低点】（收盘价不必也在新低）；中轨打标：只看最新一根已收盘 5 分钟 K 线 —— 碰到中轨、或收盘落在中轨下方即标记（两种情形同一种橙色标记）；一旦后续 K 线回到中轨上方且没碰到中轨，标记立即取消，不回看历史；掉出成交额前 20 也剔除。">
-          <input type="checkbox" id="autoWatch" checked> 自动监控
-        </label>
+        <!-- 2026-11-10：去掉「自动监控」勾选框，改为**常开**。
+             原因：勾选框太小，误碰一下就把自动扫描关了（整池不再自动出入），体验很差。
+             现在只留一个不可点的状态标签，悬停仍能看完整规则。 -->
+        <span class="auto-wrap auto-on" title="自动监控**常开**（已取消勾选框，误碰也不会关）。全部只按「已收盘」的 5 分钟 K 线判断，正在走的那根不参与（每 10 秒复核，每 5 分钟一轮选股；收盘后自动暂停扫描）。入池：成交额前 20 里，5 分钟 K 线一路不出现上涨（走平不算中断），这段里只要有 2 根的单根跌幅超过 0.25%；涨破出局：入池后任一根已收盘 K 线收 > 前一根收；破位出局：入池后（且 10:15 后）任一根已收盘的「下跌」K 线最低价跌破【入池时的日内低点】（收盘价不必也在新低）；中轨打标：只看最新一根已收盘 5 分钟 K 线 —— 碰到中轨、或收盘落在中轨下方即标记（两种情形同一种橙色标记）；一旦后续 K 线回到中轨上方且没碰到中轨，标记立即取消，不回看历史；掉出成交额前 20 也剔除。">自动监控 · 常开</span>
         <button id="autoScan" class="kbtn" title="立即扫描一次">立即扫描</button>
         <span id="autoInfo" class="auto-info">未扫描</span>
       </div>
@@ -1696,7 +1700,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.3.3';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.3.4';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2372,7 +2376,9 @@ const LOD_START = '10:15';       // 规则启用时点（按 K 线时间，与�
 const LOD_EPS   = 0.0005;        // 触及容差 0.05%（吸收浮点误差与擦边价）
 const LOD_TAIL  = 64;            // 需覆盖当天全部 5 分钟 K 线（A股一天 48 根），取 64 留余量
 
-function autoWatchOn() { const c = $('autoWatch'); return !!(c && c.checked); }
+// 「自动监控」自 v1.3.4 起**常开**：勾选框已移除（误碰会关掉自动扫描，体验差）。
+// ⛔ 不要恢复成读 checkbox —— 页面里已经没有 #autoWatch 了。
+function autoWatchOn() { return true; }
 
 // ==================== 只按「已收盘」的 K 线判断 ====================
 // 腾讯 K 线的时间标签 = 该根 5 分钟 K 线的「收盘时刻」。
@@ -2708,8 +2714,7 @@ function hasRisenSince(d, entry) {
 }
 
 async function autoWatchScan() {
-  const cb = $('autoWatch');
-  if (!cb || !cb.checked) return;
+  // ⚠️ v1.3.4 起自动监控常开，这里不再检查 #autoWatch（该元素已删除）
   if (!allRows.length) return;
   await ensureQuotesFresh();     // ⭐ 先确保行情快照是【当天】的，别拿旧快照算「成交额前 20」
 
