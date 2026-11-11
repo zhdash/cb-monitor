@@ -1621,9 +1621,61 @@ function feedSave() {
   }
 }
 
+// ==================== 代码 → 名称 字典（流水**只显示名称**）====================
+// ⛔ 老大 2026-11-11 明确要求：流水里不要出现数字代码，必须用转债名称。
+// 只查 allRows 会漏 —— 某只债掉出行情（成交额为空 / 停牌 / 刚被剔出前 20）时就退回显示代码，
+// 截图里的「127096 剔除 掉出成交额前20」就是这么来的。
+// ⇒ 三层兜底：① 当前行情行 allRows ② 同源快照 cb_list.json（318 只存续债）③ 才退到代码。
+let nameBook = new Map();
+const isCodeLike = s => /^\d{6}$/.test(String(s || '').trim());
+
+function absorbNames(arr) {
+  (arr || []).forEach(x => {
+    if (x && x.code && x.name && !isCodeLike(x.name)) nameBook.set(String(x.code), x.name);
+  });
+}
+
+// 启动时读一次同源快照，把「代码→名称」装进字典（11KB，两种运行模式都能取到）
+async function loadNameBook() {
+  try {
+    const res = await fetchWithTimeout('cb_list.json', CB_LIST_TIMEOUT);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    ((j && j.list) || []).forEach(x => {
+      if (x && x[0] && x[1] && !isCodeLike(x[1])) nameBook.set(String(x[0]), x[1]);
+    });
+  } catch (e) { /* 拿不到就只靠行情行，不影响使用 */ }
+  absorbNames(allRows);
+  if (repairFeedNames()) { try { renderFeed(); } catch (e) {} }
+}
+
+// 历史流水里「当时没解析出名字」的记录 → 用现在的字典回填名称（含老记录里的纯代码）
+function repairFeedNames() {
+  let dirty = false;
+  (feedDays || []).forEach(day => {
+    (day.items || []).forEach(it => {
+      if (!it) return;
+      const code = it.c || (isCodeLike(it.n) ? String(it.n).trim() : '');
+      if (!code) return;
+      if (it.n && !isCodeLike(it.n) && it.n !== code) return;   // 本来就是正常名称
+      const nm = codeName(code);
+      if (nm && !isCodeLike(nm)) {
+        it.n = nm;
+        if (!it.c) it.c = code;
+        dirty = true;
+      }
+    });
+  });
+  if (dirty) feedSave();
+  return dirty;
+}
+
 function codeName(code) {
+  if (!code) return '';
   const r = allRows.find(x => x.code === code);
-  return (r && r.name) || code || '';
+  if (r && r.name && !isCodeLike(r.name)) return r.name;
+  if (nameBook.has(code)) return nameBook.get(code);
+  return code;                       // 真查不到才退回代码（正常不该发生）
 }
 
 function feedPush(code, act, why) {
@@ -1631,7 +1683,7 @@ function feedPush(code, act, why) {
   const b = feedBucket();
   b.items.unshift({
     t: p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()),
-    n: codeName(code), a: act, w: why || '',
+    n: codeName(code), a: act, w: why || '', c: code || '',   // c = 代码，供以后回填名称用
   });
   // 只在天数上设上限，**当天条数永不截断**
   if (feedDays.length > FEED_KEEP_DAYS) feedDays.length = FEED_KEEP_DAYS;
@@ -1700,7 +1752,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.3.4';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.3.5';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2289,6 +2341,7 @@ async function load() {
     const d = await apiQuotes();
     lastMarket = d.market; lastTs = d.ts; lastError = d.error || '';
     (d.rows && d.rows.length) ? noteLoadSuccess() : noteLoadFailure();
+    absorbNames(d.rows);          // 行情里带的名字也记进字典（流水只显示名称）
     render(d);
     loadPremium();
     loadRedeem();
@@ -3108,6 +3161,7 @@ $('feedDays').addEventListener('click', (ev) => {
   feedViewDay = chip.dataset.day;
   renderFeed();
 });
+try { loadNameBook(); } catch (e) { console.error('loadNameBook failed', e); }   // 代码→名称（流水用）
 try { renderFeed(); } catch (e) { console.error('renderFeed failed', e); }
 try { applySchedule(); } catch (e) { console.error('applySchedule failed', e); }
 try { startAutoWatch(); } catch (e) { console.error('startAutoWatch failed', e); }
