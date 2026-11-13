@@ -84,8 +84,11 @@ python -m http.server 8022
 # 打开 http://127.0.0.1:8022/app.html
 ```
 
-托管时只需上传 **`app.html`**、**`vendor/echarts.min.js`** 和 **`cb_list.json`**（入口地址 = `…/app.html`）。
-`diag.html`（直连自检页）建议一并上传，排查问题时直接打开它即可逐项看结果。
+托管时要上传 **`app.html`**、**`index.html`**（同内容，供根路径 `/` 命中）、**`vendor/echarts.min.js`**、**`cb_list.json`**；
+`diag.html`（直连自检页）建议一并上传，排查时直接打开它逐项看结果。
+
+> ⚠️ 当前线上托管（WorkBuddy 应用托管）要求链接带 **`?sharecode=`**，裸域名返回 403；
+> 以发布工具返回的完整链接为准（详见 `cb_monitor_notes.md`）。
 
 > **直连可行性**（2026-09-30 实测，以下接口均返回 `Access-Control-Allow-Origin: *`）：
 > 腾讯 `qt.gtimg.cn`（行情）、`ifzq.gtimg.cn`（5 / 60 分钟 K 线）、
@@ -106,7 +109,7 @@ python -m http.server 8022
 | `app.py` | **入口**。增强启动器：gzip、vendor 强缓存、首页指向 `app.html`，并新增 `/api/klines60`、`/api/premium`、`/api/redeem` 三个接口 |
 | `app.html` | 美化版前端页面（实际使用的页面） |
 | `server.py` | 数据源 / 连接池 / 缓存 / 基础 API，被 `app.py` 在运行时打补丁扩展 |
-| `index.html` | 早期版本页面，保留作参考；`app.py` 在找不到 `app.html` 时回退到它 |
+| `index.html` | **`app.html` 的同步副本**（不是历史页）。静态托管的根路径 `/` 命中的就是它；⚠️ **每次改完 `app.html` 必须 `cp app.html index.html`**，否则根路径停在旧内容 |
 | `vendor/echarts.min.js` | K 线图表库（本地托管，24h 强缓存） |
 | `cb_list.json` | **存续可转债快照**（代码/名称/正股）。只作 `fetchCbList()` 的兜底：上游清单接口抖动时用它，避免整页空白 |
 | `diag.html` | **直连自检页**：逐项测各数据源与 GBK 解码，每项直接给 HTTP 状态或错误名（部署排查用） |
@@ -144,6 +147,27 @@ python -m http.server 8022
 - 本工具仅做数据整理与条件提示，**不构成任何投资建议**。
 
 ## 变更记录
+
+### v1.3.7 —— 全项目审计：修掉 5 处不一致/浪费（无行为变更）
+
+通读整个项目（`app.html` 3213 行 / `app.py` 417 / `server.py` 737 / `diag.html` / `README` / `start.bat`）后的体检与修复。
+
+**已修（有把握的）**
+
+| # | 问题 | 修法 | 收益 |
+|---|---|---|---|
+| 1 | `server.py` 拉清单用 `columns=ALL`，单页 **3.1MB**、3 页近 9MB，而 `load_cb_list()` 只用 4 个字段 | 只取 `SECURITY_CODE,SECURITY_NAME_ABBR,CONVERT_STOCK_CODE,DELIST_DATE` | **60.6KB/页**（快 51 倍）、3 页 **9MB → 180KB**、耗时 **≈20s → 1.2s** |
+| 2 | 后端清单缓存 **6 小时**（新债上市当天本机看不到，需重启） | `CB_LIST_CACHE_HOURS = 0.5` | 新债最多 30 分钟进本机 |
+| 3 | README 说 `index.html` 是「早期版本页面，保留作参考」 | 改为「**`app.html` 的同步副本**，根路径 `/` 命中的就是它，改完必须 `cp`」 | 避免有人照文档以为它是废弃页而不同步 |
+| 4 | README 部署清单只写 `app.html`/`vendor`/`cb_list.json` | 补 `index.html`；并注明线上链接**必须带 `?sharecode=`** | 照文档部署不会漏文件/踩 403 |
+| 5 | `app.html` 里一句过时注释（「自动监控勾选才执行剔除」） | 改为「v1.3.4 起常开」 | 防误读 |
+| 6 | `cb_list.json` 快照停在 11-10 | 刷新到 **11-13 / 316 只** | 兜底清单不再陈旧 |
+
+**体检结论（没问题的部分）**：112 个函数**无重复定义、无死函数**；46 个 id **无重复、无失效引用**；
+无乱码、无 `debugger`/`TODO`；`console.log` 仅 2 处（版本横幅、批量自增，属诊断用）；
+`start.bat` 编码与路径正常；备份文件均已被 `.gitignore` 排除、不进仓库。
+
+**记录在案、暂不处理的权衡**（见项目记忆的「审计待议」节）。
 
 ### v1.3.6 —— 治「必须清站点数据才刷到最新」：禁缓存 + 清单版本化 + 完整性自检
 

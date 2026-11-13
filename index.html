@@ -1758,7 +1758,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.3.6';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.3.7';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2660,7 +2660,7 @@ async function midBandScan() {
   try {
     // dayLowBreak 需要当天全部 K 线；恒用 LOD_TAIL；中轨只是顺便多读几个字段，载荷可接受
     const map = await apiKlinesM5(codes, LOD_TAIL);
-    const lodOn = autoWatchOn();    // 「自动监控」勾选才执行剔除
+    const lodOn = autoWatchOn();    // v1.3.4 起自动监控常开（恒 true），剔除始终执行
     let riseDrop = 0, lowDrop = 0;
     codes.forEach(code => {
       const d = map && map[code];
