@@ -3,7 +3,7 @@
 可转债成交额监控服务（Top20 + 5分钟K线/布林线）
 ================================================
 数据源（均为免费公开接口）：
-  1) 东方财富 datacenter RPT_BOND_CB_LIST —— 存续可转债清单（分页拉全，过滤 DELIST_DATE 为空）
+  1) 东方财富 datacenter RPT_BOND_CB_LIST —— 存续可转债清单（分页拉全，只取 4 列，过滤 DELIST_DATE 为空）
   2) 腾讯行情 qt.gtimg.cn —— 实时行情（批量查询，稳/不限流，涨跌幅口径与东财/同花顺一致）
   3) 腾讯K线 ifzq.gtimg.cn/appstock/app/kline/mkline —— 5分钟K线（主力，与腾讯自选股一致）
   4) 东方财富 push2his —— 5分钟K线备用（腾讯失败时兜底），后端计算标准布林线(MA20±2σ)
@@ -38,7 +38,9 @@ PORT = 8011
 REFRESH_SEC = 15          # 兜底循环刷新周期（秒）
 STALE_SEC = 4             # 交易时段内快照过期阈值：超过即触发按需刷新
 BATCH_SIZE = 80           # 腾讯每批查询只数（腾讯对单次批量长度较敏感，保守取值）
-CB_LIST_CACHE_HOURS = 6   # 可转债清单缓存时长（小时）
+CB_LIST_CACHE_HOURS = 0.5  # 可转债清单缓存时长（小时）
+                          # ↑ 2026-11-13：原 6 小时，新债上市当天本机看不到；
+                          #   裁剪列后一次只要 62KB×3 页，半小时一刷成本可忽略
 HTTP_TIMEOUT = 12         # 单次外网请求超时（秒）
 MAX_WORKERS = 8           # 外网请求并发上限
 POOL_PER_HOST = 4         # 每主机保留的空闲连接数
@@ -52,8 +54,12 @@ BOLL_MULT = 2.0           # 标准布林线标准差倍数
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
+# ⚠️ 只取真正用到的 4 列（代码/名称/正股/退市日）。
+#    原来用 columns=ALL：单页 3.1MB、3 页共 ~9MB，而 load_cb_list() 只用这 4 个字段。
+#    实测裁剪后 62KB/页，快 15 倍以上（2026-11-13 审计）。
 EAST_URL = ("https://datacenter-web.eastmoney.com/api/data/v1/get"
-            "?reportName=RPT_BOND_CB_LIST&columns=ALL"
+            "?reportName=RPT_BOND_CB_LIST"
+            "&columns=SECURITY_CODE%2CSECURITY_NAME_ABBR%2CCONVERT_STOCK_CODE%2CDELIST_DATE"
             "&pageNumber={page}&pageSize=500"
             "&sortColumns=SECURITY_CODE&sortTypes=1&source=WEB&client=WEB")
 TENCENT_URL = "https://qt.gtimg.cn/q={codes}"
