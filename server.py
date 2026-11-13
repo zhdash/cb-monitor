@@ -253,6 +253,9 @@ def load_cb_list():
         if r.get("DELIST_DATE"):       # 有退市日期 = 已退市
             continue
         code = r["SECURITY_CODE"]
+        if code.startswith("404"):     # 404xxx = 三板/退市债：腾讯不返回行情与 K 线，
+            continue                   # secid 也会拼错（sz404xxx），直接不进名单
+
         alive.append({
             "code": code,
             "name": r["SECURITY_NAME_ABBR"],

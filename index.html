@@ -1758,7 +1758,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.3.7';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.3.8';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2088,7 +2088,9 @@ async function fetchCbListRemote(deadlineMs) {
     page++;
     if (page > 6) break;                       // 兜底：别无限翻页
   }
-  return rows.filter(r => !r.DELIST_DATE).map(r => ({
+  // ⛔ 剔除 404xxx：那是**三板/退市债**，腾讯行情与 5 分钟 K 线都不返回，
+  //    留着只会让「清单 316 只 vs 行情 314 条」永远对不上，secid 也会拼错（sz404xxx）。
+  return rows.filter(r => !r.DELIST_DATE && !/^404/.test(String(r.SECURITY_CODE || ''))).map(r => ({
     code: String(r.SECURITY_CODE),
     name: r.SECURITY_NAME_ABBR || '',
     stock: r.CONVERT_STOCK_CODE || '',
