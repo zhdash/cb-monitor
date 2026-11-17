@@ -68,7 +68,7 @@ const KC = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=sh113709,m5,,8
 const LC = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_BOND_CB_LIST&columns=SECURITY_CODE,CONVERT_STOCK_CODE&pageSize=2&source=WEB&client=WEB&pageNumber=1';
 const PC = 'https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&fields=f12,f235,f236,f237&secids=1.113709';
 const RV = 'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_BOND_CB_LIST'
-  + '&columns=SECURITY_CODE,SECURITY_NAME_ABBR,DELIST_DATE,NOTICE_DATE_SH,RECORD_DATE_SH,EXECUTE_PRICE_SH,EXECUTE_REASON_SH'
+  + '&columns=SECURITY_CODE,SECURITY_NAME_ABBR,DELIST_DATE,NOTICE_DATE_SH,RECORD_DATE_SH,EXECUTE_START_DATESH,EXECUTE_PRICE_SH,EXECUTE_REASON_SH'
   + '&pageSize=500&sortColumns=SECURITY_CODE&sortTypes=1&source=WEB&client=WEB&pageNumber=1';
 
 const results = [];
@@ -222,7 +222,7 @@ const b1 = $('#rows1'), b2 = $('#rows2'), b3 = $('#rows3');
     const hit = rows.filter(x => !ok(x.DELIST_DATE) &&
       (String(x.EXECUTE_REASON_SH == null ? '' : x.EXECUTE_REASON_SH) === '4' ||
        String(x.EXECUTE_REASON_SH == null ? '' : x.EXECUTE_REASON_SH) === '5' ||
-       ok(x.RECORD_DATE_SH) || ok(x.EXECUTE_PRICE_SH)));
+       ok(x.RECORD_DATE_SH) || ok(x.EXECUTE_PRICE_SH) || ok(x.EXECUTE_START_DATESH)));
     return 'HTTP ' + r.status + ' ｜ 本页 ' + rows.length + ' 条 ｜ 命中强赎 ' + hit.length +
            ' 只 ｜ 共 ' + ((j.result || {}).pages || 1) + ' 页';
   });

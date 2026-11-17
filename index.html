@@ -1758,7 +1758,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.3.8';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.3.9';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2374,6 +2374,8 @@ async function load() {
     (d.rows && d.rows.length) ? noteLoadSuccess() : noteLoadFailure();
     absorbNames(d.rows);          // 行情里带的名字也记进字典（流水只显示名称）
     render(d);
+    $('hint').textContent = '';   // 先清上一轮提示（含完整性黄字）——必须放在 noteQuoteCompleteness 之前，
+                                  // 否则下面的黄字刚写进去就被清掉（v1.3.6 曾被自己的这行抵消，v1.3.9 修正）
     noteQuoteCompleteness(d);     // 本轮行数明显偏少时提示（多为网络抖动，下一轮自愈）
     loadPremium();
     loadRedeem();
@@ -2383,7 +2385,6 @@ async function load() {
       loadKline(curCode, row && row.name, false);
     }
     failCnt = 0;
-    $('hint').textContent = '';
   } catch (e) {
     noteLoadFailure();
     failCnt++;
@@ -2559,7 +2560,6 @@ function dayLowBreak(d, entry) {
 //   ② **中轨下方**：已收盘 K 线的**收盘价 < 中轨**（这是持续状态，不要求那根是下跌）。
 //   ⭐ 两者都打**同一个**橙色「⚡5分中轨」标记，不再分「⚡ / 曾触」两种样式；
 //      具体是哪种原因写在悬停提示（title）里。
-const MID_TAIL = 8;              // 判定只需最后几根，压缩载荷
 const MID_WIN = 10000;           // 每 10 秒核对一次（自选池：涨破 + 破位 + 中轨 合并一次遍历）
 let midTouch = new Map();        // code -> {t:'HH:MM', kind:'touch'|'below', live:bool}
 let midScanBusy = false;
@@ -2716,7 +2716,6 @@ function startMidScan() {
 const AUTO_TH = 0.0025;          // 每根跌幅阈值 0.25%
 const AUTO_WIN = 10000;          // 10 秒（与行情刷新、剔除扫描对齐）
 const AUTO_RUN = 2;              // 一段连续下跌里，至少要有 N 根「跌幅超过阈值」
-const SCAN_TAIL = 16;            // 扫描只需尾部少量K线（压缩批量接口载荷）
 
 // 入选判定（2026-09-23 老大重新定义：更清晰，也更宽）：
 //   ① 从最新一根【已收盘】K 线往前，一路【不许出现上涨】（每根收 ≤ 前一根收）；
