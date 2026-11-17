@@ -415,12 +415,16 @@ def build_payload():
         rows = list(_quotes)          # 返回全市场（约300只），前端负责排序/搜索/取前20
         ts = _quotes_ts
         total = len(_quotes)
+        list_total = len(_cb_list)    # 清单条数（存续债口径）
         err = _last_error
     return {
         "ts": datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else "",
         "ts_raw": int(ts),
         "market": market_status(),
         "total": total,
+        # ⭐ 「存续债」应显示这个数：行情行数会因停牌/无成交少几只，
+        #    用它才是真实存续数量（2026-11-17 对账修复）
+        "list_total": list_total,
         "source": "腾讯行情" if total else "加载中",
         "error": err,
         "rows": rows,
