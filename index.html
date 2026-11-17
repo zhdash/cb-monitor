@@ -115,7 +115,7 @@
   .btn:active{transform:scale(.96)}
 
   /* ---------- 市场概览 ---------- */
-  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:14px}
+  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:14px}
   .stat{
     background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
     padding:12px 14px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:6px;min-width:0;
@@ -535,7 +535,7 @@
     </div>
     <div class="chips">
       <span class="chip">市场状态 <b id="market" class="pill closed">加载中</b></span>
-      <span class="chip">存续债 <b id="total">--</b> 只</span>
+      <span class="chip" title="存续债 = 东财清单里的存续数量（已剔退市与三板债）；若当日有停牌/无成交的债，会额外标出「N 只无行情」">存续债 <b id="total">--</b> 只<span id="totalMiss" class="rel"></span></span>
       <span class="chip">更新 <b id="ts">--</b><span id="tsRel" class="rel"></span></span>
       <span class="chip chip-refresh">刷新
         <select id="refreshSel" title="选择自动刷新间隔">
@@ -555,6 +555,7 @@
 
   <div class="stats">
     <div class="stat"><div class="k">上涨家数</div><div class="v up" id="upCnt">--</div></div>
+    <div class="stat"><div class="k">平盘家数</div><div class="v flat" id="flatCnt" title="涨跌幅为 0（或当日无涨跌幅）的家数；上涨+平盘+下跌 恒等于本轮行情行数">--</div></div>
     <div class="stat"><div class="k">下跌家数</div><div class="v down" id="downCnt">--</div></div>
     <div class="stat"><div class="k">总成交额</div><div class="v" id="sumAmt">--</div></div>
     <div class="stat"><div class="k">平均涨跌</div><div class="v" id="avgPct">--</div></div>
@@ -861,7 +862,16 @@ function applyRender() {
   const pillMap = { '交易中': 'live', '午间休市': 'noon', '盘前': 'noon', '已收盘': 'closed', '休市': 'closed' };
   $('market').textContent = d.market || '--';
   $('market').className = 'pill ' + (pillMap[d.market] || 'closed');
-  $('total').textContent = d.total != null ? d.total : '--';
+  // ⭐ 「存续债」用【清单条数】（真实存续数），不用行情行数 ——
+  //    行情行数会因停牌/无成交少几只，若显示行情行数，这个数字本身就是错的。
+  const listN = (d.list_total != null && d.list_total > 0)
+    ? d.list_total
+    : ((typeof _cbListCache !== 'undefined' && _cbListCache && _cbListCache.data
+        && _cbListCache.data.length) || d.total || 0);
+  $('total').textContent = listN || '--';
+  const missN = Math.max(0, listN - (d.rows ? d.rows.length : 0));
+  const missEl = $('totalMiss');
+  if (missEl) missEl.textContent = missN > 0 ? '（' + missN + ' 只无行情）' : '';
   const tsStr = d.ts || '--';
   $('ts').textContent = tsStr;
   updateTsRel(tsStr);
@@ -894,11 +904,15 @@ function renderStats() {
   for (let i = 0; i < rows.length; i++) {
     const p = rows[i].change_pct;
     sum += rows[i].amount_wan || 0;
-    if (p == null || isNaN(p)) continue;
-    if (p > 0) up++; else if (p < 0) down++; else flat++;
-    pctSum += p; n++;
+    // ⭐ 平盘含「涨跌幅缺失」（停牌/无成交当日无涨跌）——否则上涨+下跌 会永远少于行情行数，
+    //    看起来像「抓漏了」（2026-11-17 用户反馈的根因）。三数之和必须恒等于行数。
+    if (p == null || isNaN(p)) flat++;
+    else if (p > 0) up++; else if (p < 0) down++; else flat++;
+    // 平均值只用【有涨跌幅】的行：停牌/无涨跌的行计入平盘家数，但不能当成 0% 拉低均值
+    if (p != null && !isNaN(p)) { pctSum += p; n++; }
   }
   setText($('upCnt'), String(up));
+  setText($('flatCnt'), String(flat));
   setText($('downCnt'), String(down));
   setText($('sumAmt'), sum >= 10000 ? (sum / 10000).toFixed(0) + ' 亿' : sum.toFixed(0) + ' 万');
   const avg = n ? pctSum / n : 0;
@@ -1758,7 +1772,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.3.9';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.4.0';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2223,6 +2237,7 @@ async function directQuotes() {
     market: localMarketStatus(),
     ts: now.getFullYear() + '-' + p(now.getMonth() + 1) + '-' + p(now.getDate()) + ' ' + p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds()),
     total: rows.length,
+    list_total: list.length,          // 清单条数（存续债口径）；rows.length 是「有行情的」
     rows: rows,
     error: error,
   };
