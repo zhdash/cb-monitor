@@ -1772,7 +1772,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.4.7';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.4.8';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2514,6 +2514,19 @@ function lastClosedIdx(d) {
   return (isFinite(t) && Date.now() < t) ? n - 2 : n - 1;
 }
 
+// ⭐ 数据【已定稿】的最后一根 K 线索引（v1.4.8）。
+//   刚收盘不足 BAR_SETTLE_MS 的那根，收盘价/涨跌幅仍可能被上游修正
+//   （腾讯 m5 实测：收盘后 8 秒读到的值仍会变 —— 奥普 118075 / 爱科 118069 两例）。
+//   「入池 / 涨破 / 破位 / 中轨」一律以它为准，否则同一根 K 线会在 10 秒内先「跌」后「涨」，
+//   导致刚入池就被兜底剔除（2026-11-23 爱科 14:25:09 入池 → 14:25:19 剔除）。
+function settledEnd(d) {
+  const ts = d && d.times;
+  if (!ts || !ts.length) return -1;
+  let end = lastClosedIdx(d);
+  if (end >= 1 && Date.now() - barEndMs(ts[end]) < BAR_SETTLE_MS) end--;
+  return end;
+}
+
 // K 线时间戳（"YYYY-MM-DD HH:MM[:SS]"）的两个常用切片
 function dayOf(ts) { return String(ts).slice(0, 10); }   // "YYYY-MM-DD"
 function hmOf(ts)  { return String(ts).slice(11, 16); }  // "HH:MM"
@@ -2638,7 +2651,7 @@ function midZoneAt(d, i) {
 function midStateNow(d) {
   const ts = d && d.times;
   if (!ts || !ts.length) return null;
-  const end = lastClosedIdx(d);              // 只看已收盘的 K 线（正在走的那根不参与）
+  const end = settledEnd(d);                 // 只看【已定稿】的 K 线（未定稿那根可能还会被修正）
   if (end < 0) return null;
   const z = midZoneAt(d, end);
   if (!z) return null;
@@ -2656,7 +2669,7 @@ function midStateNow(d) {
 function entryMidSignal(d, entryTs) {
   const k = d && d.kline, ts = d && d.times;
   if (!k || !ts || k.length < 2) return null;
-  const end = lastClosedIdx(d);
+  const end = settledEnd(d);                    // 只看【已定稿】的 K 线
   if (end < 1) return null;
   let ei = entryTs ? ts.indexOf(entryTs) : -1;
   if (ei < 1 || ei > end) ei = end;              // 手动入池 / 记录已过期 → 用当前最新已收盘根
@@ -2815,7 +2828,7 @@ const AUTO_RUN = 2;              // 一段连续下跌里，至少要有 N 根�
 function strongDownCount(d) {
   const k = d && d.kline, ts = d && d.times;
   if (!k || !ts) return 0;
-  const end = lastClosedIdx(d);                // 只用已收盘的 K 线
+  const end = settledEnd(d);                   // 只用【已定稿】的 K 线（未定稿那根可能还会被修正）
   if (end < 1) return 0;                       // 至少要 2 根才比得出涨跌
   const lastDay = dayOf(ts[end]);              // 「当天」= 最新一根已收盘 K 线所在日
   let strong = 0;
@@ -2846,7 +2859,7 @@ function nowBarStr() {
 function hasRisenSince(d, entry) {
   const k = d && d.kline, ts = d && d.times;
   if (!k || !ts || k.length < 2) return null;
-  const end = lastClosedIdx(d);                    // 未收盘的那根不参与判断
+  const end = settledEnd(d);                       // 只用【已定稿】的 K 线（未定稿那根可能还会被修正）
   if (end < 1) return null;
   const lastDay = dayOf(ts[k.length - 1]);
   let start = 1;                                   // 默认：当天全段
@@ -2916,7 +2929,7 @@ async function autoWatchScan() {
         //    结果：该剔的不剔。2026-09-30 振26转债 113709 实测：
         //      11:10 下跌 −0.173%、低 179.700 = 日内新低；取样点却记成正在走的 11:15
         //      → 基准被拉到 179.700 → 不剔。改记 11:10 后 → 低 179.700 ≤ 基准 180.654 → 正确剔除。
-        const ci = lastClosedIdx(d);
+        const ci = settledEnd(d);                  // 记【已定稿】那根，避免取样点落在会被修正的根上
         watchEntry[code] = String(d.times[ci >= 0 ? ci : d.times.length - 1]);
         added++;
         feedPush(code, 'in', '连跌 ' + strongDownCount(d) + ' 根达标');
