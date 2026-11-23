@@ -1772,7 +1772,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.4.5';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.4.6';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2417,9 +2417,17 @@ async function load() {
   }
 }
 
-// 回到前台立刻补一次数据
+// 回到前台立刻补一次数据 + 【立即复核池子】
+// ⚠️ 为什么必须显式复核（v1.4.6）：手机浏览器会节流/暂停后台标签页的 setInterval，
+//    回前台后定时器要等一个完整周期才恢复。这段时间里池子还是「切走前」的旧状态 ——
+//    表现为「明明早就该涨破/破位剔除的债，回到页面还挂在 5下跌 里」。
+//    这里回到前台立刻跑一轮 midBandScan（涨破/破位/连跌兜底 + 中轨标记）与 60 下跌复核。
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { scheduleRender(); load(); }
+  if (!document.hidden) {
+    scheduleRender(); load();
+    try { if (watchSet.size) midBandScan(); } catch (e) { console.error('resume midBandScan failed', e); }
+    try { if (watch60.size) scan60Watch(); } catch (e) { console.error('resume scan60Watch failed', e); }
+  }
 });
 
 // ==================== 行情快照保鲜（自动扫描专用）====================
