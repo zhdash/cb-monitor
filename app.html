@@ -751,16 +751,36 @@ function top20Codes() {
     .slice(0, 20)
     .map(r => r.code);
 }
-// 成交额前 20 集合；数据不足 20 只时返回 null → 不剪枝（避免开盘前把池子清空）
-function top20Set() {
-  return (allRows && allRows.length >= 20) ? new Set(top20Codes()) : null;
+// ⛔⛔「不在前 20 集合里」**不等于**「掉出成交额前 20」（2026-11-23 事故）。
+//   行情是分 4 批拉的、还有每轮 48 次请求的预算；某批失败/预算耗尽时，那批债
+//   【根本不在快照里】。旧代码把「查无此码」和「排名靠后」当成同一件事：
+//   14:35 盛德（当时第 5、37 亿）、鼎龙（第 10、24 亿）被写成「掉出成交额前20」踢出池子。
+// ⇒ 剪枝只认一种【正面证据】：快照里确实有这只债、且它的排名 > 20。
+//   查无此码 = 数据缺失 → 本轮跳过（宁可漏剔，也不误剔 —— 与破位判定同一原则）。
+const PRUNE_MAX_AGE = 60000;   // 快照超过 60 秒不剪枝（隔夜/断网时排名没有意义）
+function top20RankMap() {
+  if (!allRows || allRows.length < 20) return null;
+  if (Date.now() - allRowsTs > PRUNE_MAX_AGE) return null;
+  const base = Math.max(_qMaxSeen || 0,
+    (typeof _cbListCache !== 'undefined' && _cbListCache && _cbListCache.data)
+      ? _cbListCache.data.length : 0);
+  // 快照明显残缺（缺超 2%）→ 排名不可信，整轮不剪枝
+  if (base && allRows.length < base - Math.max(3, Math.round(base * 0.02))) return null;
+  const m = new Map();
+  [...allRows].sort((a, b) => (b.amount_wan || 0) - (a.amount_wan || 0))
+              .forEach((r, i) => { if (r && r.code) m.set(r.code, i + 1); });
+  return m;
 }
-// 「成交额前 20」剪枝：掉出前 20 的成员一律剔除，返回剔除数量（数据未就绪时不剪枝）
+// 「成交额前 20」剪枝：只在【确认排名 > 20】时剔除，返回剔除数量
 function pruneToTop20(members, drop) {
-  const t20 = top20Set();
-  if (!t20) return 0;
+  const ranks = top20RankMap();
+  if (!ranks) return 0;
   let cut = 0;
-  Array.from(members).forEach(code => { if (!t20.has(code)) { drop(code); cut++; } });
+  Array.from(members).forEach(code => {
+    const rank = ranks.get(code);
+    if (rank == null) return;                 // ⭐ 快照里没有它 = 数据缺失，不是掉名次 → 不剔
+    if (rank > 20) { drop(code, rank); cut++; }
+  });
   return cut;
 }
 // 多个列表（数组或 Set）去重合并，保持顺序、过滤空值
@@ -1772,7 +1792,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.4.8';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.4.9';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2732,8 +2752,8 @@ async function midBandScan() {
   if (midScanBusy) return;
   // 「成交额前 20」剪枝：掉出前 20 一律剔除（数据未就绪时不剪枝）
   const outCut = pruneToTop20(watchSet,
-                              code => { watchSet.delete(code); delete watchEntry[code];
-                                        feedPush(code, 'out', '掉出成交额前20'); });
+                              (code, rank) => { watchSet.delete(code); delete watchEntry[code];
+                                        feedPush(code, 'out', '掉出成交额前20｜现第 ' + rank + ' 名'); });
   if (outCut) { outDropCount += outCut; persistWatch(); renderAutoInfo(); }
   // 顺带清掉已移出自选的记录
   midTouch.forEach((v, code) => { if (!watchSet.has(code)) midTouch.delete(code); });
@@ -3057,7 +3077,7 @@ async function scan60Watch() {
     });
     w60Info = new Map(Object.keys(info).map(k => [k, info[k]]));
     // ①-a 掉出「成交额前 20」→ 直接剔除
-    removed += pruneToTop20(watch60, code => watch60.delete(code));
+    removed += pruneToTop20(watch60, (code, rank) => watch60.delete(code));
     // ①-b 当天碰过 60 分钟中轨 / 跌到中轨下方、当天有下跌 K 线触及最高价、
     //      或跌幅已收窄到 1.9% 以内（实时条件不再满足）
     Array.from(watch60).forEach(code => {
