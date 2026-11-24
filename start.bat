@@ -20,8 +20,8 @@ if %errorlevel%==0 (
 
 REM ---- 2. ¶¨Î» Python ½âÊÍÆ÷ ----
 set "PY="
-if exist "C:\Users\jones\.workbuddy\binaries\python\versions\3.13.12\python.exe" (
-    set "PY=C:\Users\jones\.workbuddy\binaries\python\versions\3.13.12\python.exe"
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PY=%~dp0.venv\Scripts\python.exe"
 ) else (
     where python >nul 2>nul
     if %errorlevel%==0 set "PY=python"
