@@ -1801,7 +1801,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.5.2';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.5.3';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2446,29 +2446,30 @@ async function load() {
   }
 }
 
-// 回到前台立刻补一次数据 + 【立即复核池子】
-// ⚠️ 为什么必须显式复核（v1.4.6）：手机浏览器会节流/暂停后台标签页的 setInterval，
-//    回前台后定时器要等一个完整周期才恢复。这段时间里池子还是「切走前」的旧状态 ——
-//    表现为「明明早就该涨破/破位剔除的债，回到页面还挂在 5下跌 里」。
-//    这里回到前台立刻跑一轮 midBandScan（涨破/破位/连跌兜底 + 中轨标记）与 60 下跌复核。
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) {
-    scheduleRender();
-    // ⭐ 回前台：先 load() 把行情拉新，再【立即】扫一次入池（v1.5.1）
-    //    为什么必须补这一下：手机浏览器会挂起/节流后台标签页的定时器，切回来时入池扫描
-    //    要等下一个 tick 才跑。这段时间里已经跌够 2 根的债会晚进池 ——
-    //    2026-11-25 华懋 113677：10:20 就已经是 2 根（−0.96% / −1.05%），
-    //    但直到 10:32:15 才被扫到，流水写成「连跌 4 根达标」。
-    //    顺序很重要：先 await load()（行情拉新）再扫，否则会拿切走前的旧 top20 去扫。
-    Promise.resolve(load()).then(() => {
-      if (canAutoRefresh()) {                       // 非交易时段不扫（与定时器口径一致）
-        try { autoWatchScan(); } catch (e) { console.error('resume autoWatchScan failed', e); }
-      }
-      try { if (watchSet.size) midBandScan(); } catch (e) { console.error('resume midBandScan failed', e); }
-      try { if (watch60.size) scan60Watch(); } catch (e) { console.error('resume scan60Watch failed', e); }
-    });
-  }
-});
+// ⭐ 回前台的统一入口（v1.5.3）
+//   ① visibilitychange —— 普通切回前台
+//   ② pageshow(persisted=true) —— iOS/Safari 从 bfcache 恢复（这条路不一定发 visibilitychange）
+//   1 秒内重复触发只跑一次：真机上这两个事件常常成对到达。
+let lastResumeAt = 0;
+function resumeRefresh() {
+  if (Date.now() - lastResumeAt < 1000) return;
+  lastResumeAt = Date.now();
+  // ⭐ 清掉失败退避（v1.5.3）：上一次请求失败后会进入退避窗口，load() 与 ensureQuotesFresh()
+  //    都会直接 return —— 回前台这一次补扫就白等了。清零后回前台必定尝试一次。
+  _nextLoadAt = 0;
+  scheduleRender();
+  // 顺序：先 await load() 把行情拉新，再扫 —— 否则会拿切走前的旧 top20 去扫。
+  Promise.resolve(load()).then(() => {
+    if (canAutoRefresh()) {                       // 非交易时段不扫（与定时器口径一致）
+      try { autoWatchScan(); } catch (e) { console.error('resume autoWatchScan failed', e); }
+    }
+    try { if (watchSet.size) midBandScan(); } catch (e) { console.error('resume midBandScan failed', e); }
+    try { if (watch60.size) scan60Watch(); } catch (e) { console.error('resume scan60Watch failed', e); }
+  });
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeRefresh(); });
+// bfcache 恢复：iOS 从后台回来若走了 bfcache，只有 pageshow(persisted=true)，没有 visibilitychange
+window.addEventListener('pageshow', (e) => { if (e && e.persisted) resumeRefresh(); });
 
 // ==================== 行情快照保鲜（自动扫描专用）====================
 // 为什么要它（2026-09-30 振26转债 113709 事故）：

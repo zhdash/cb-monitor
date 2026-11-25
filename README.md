@@ -148,6 +148,28 @@ python -m http.server 8022
 
 ## 变更记录
 
+### v1.5.3 —— 补齐两个回前台边界：bfcache 的 `pageshow` + 失败退避清零
+
+回前台逻辑改为统一入口 `resumeRefresh()`，两条触发路径 + 一层去重：
+
+| 入口 | 场景 |
+|---|---|
+| `visibilitychange` | 普通切回前台 |
+| `pageshow`（`persisted === true`） | iOS/Safari 从 **bfcache** 恢复（这条路**不一定**发 `visibilitychange`） |
+
+- **1 秒内重复触发只跑一次**：真机上两个事件常成对到达，避免双份行情请求
+- **进入时 `_nextLoadAt = 0`**：清掉失败退避。否则上一次请求失败后的等待窗口会把
+  `load()` 与 `ensureQuotesFresh()` 一起挡掉，回前台那次补扫就白等了
+
+**真浏览器验证 4/4**（Edge 无头 + iPhone UA/390×844 + 真实事件）：
+
+| 用例 | 结果 |
+|---|---|
+| 失败退避窗口内回前台（`_nextLoadAt = now+60s`） | 仍拉新行情 + 扫描 1 次 ✅ |
+| 只发 `pageshow(persisted=true)`（模拟 bfcache 恢复） | 拉新 + 扫描 1 次 ✅ |
+| `visibilitychange` + `pageshow` 同时到达 | 只扫 1 次、只请求 1 次行情 ✅ |
+| `pageshow(persisted=false)`（正常加载） | 不触发补扫 ✅ |
+
 ### v1.5.2 —— 回前台时序收口：`render()` 同步落 `allRows`（真机级验证）
 
 **背景**：v1.5.1 把 `autoWatchScan()` 挂到回前台后，用 **Edge 无头 + iPhone UA/视口（390×844）**
