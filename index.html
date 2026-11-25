@@ -1792,7 +1792,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.4.9';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.5.0';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2501,7 +2501,7 @@ async function ensureQuotesFresh() {
 //    不需要收盘价也在日内新低" → 判定加上「该根必须是下跌（收 < 前收）」这一条，
 //    并明确只看 low，不看 close。
 // 「当天」= 最新 K 线所属交易日（非系统日期）。
-const LOD_START = '10:15';       // 规则启用时点（按 K 线时间，与系统时间脱钩）
+const LOD_START = '10:15';       // 规则启用时点：只认【开始时刻 ≥ 10:15】的 K 线（老大 2026-11-25）
 const LOD_EPS   = 0.0005;        // 触及容差 0.05%（吸收浮点误差与擦边价）
 // ⭐ 刚收盘 K 线的冷静期（毫秒）：腾讯 m5 在 bar 切换瞬间仍会修正最后一根的收盘价，
 //    8 秒内读到的值可能不是最终值（2026-11-23 奥普转债 118075 实例：
@@ -2550,6 +2550,17 @@ function settledEnd(d) {
 // K 线时间戳（"YYYY-MM-DD HH:MM[:SS]"）的两个常用切片
 function dayOf(ts) { return String(ts).slice(0, 10); }   // "YYYY-MM-DD"
 function hmOf(ts)  { return String(ts).slice(11, 16); }  // "HH:MM"
+// ⭐ K 线【开始时刻】的 "HH:MM"（v1.5.0）。
+//   腾讯的标签是【结束时刻】：标签 10:15 的那根覆盖 10:10~10:15。
+//   所以「10:15 之前不动手」必须拿开始时刻比，否则 10:11 的破位会被算在 10:15 那根上、
+//   直接穿过 10:15 的门槛（2026-11-25 爱科 118069：10:11:12 就被 10:15 那根剔了）。
+function barStartHM(ts) {
+  const t = barEndMs(ts);
+  if (!isFinite(t)) return '';
+  const d = new Date(t - 5 * 60000);
+  const p = x => String(x).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
 // 当前墙钟时间的 "HH:MM"（状态栏用）
 function hhmmNow() {
   const d = new Date(), p = x => String(x).padStart(2, '0');
@@ -2564,7 +2575,8 @@ function dayLowBreak(d, entry) {
   const end = lastClosedIdx(d);                // 已收盘的最后一根 —— 只用来算基准
   if (end < 1) return null;                    // 已收盘样本不足 → 不判定
   const lastDay = dayOf(ts[last]);             // 「当天」= 最新 K 线所属日
-  if (hmOf(ts[last]) < LOD_START) return null; // 尚未到 10:15 → 不判定
+  // ⭐ 按【开始时刻】判：10:15 之前（含覆盖 10:10~10:15 的那根）一律不判破位
+  if (barStartHM(ts[last]) < LOD_START) return null;
 
   // 定位「入池取样点」：精确匹配（它已收盘）取它自己；匹配不到（取样点是「正在走那根」的
   // 标签，或手动加入时的墙钟时间）则退化为「≤ entry 时刻的最后一根已收盘 K 线」
@@ -2597,7 +2609,8 @@ function dayLowBreak(d, entry) {
   const start = exact ? ei : ei + 1;
   for (let i = start; i <= last; i++) {
     if (dayOf(ts[i]) !== lastDay) continue;
-    if (hmOf(ts[i]) < LOD_START) continue;     // 只看 10:15 之后
+    // ⭐ 只认【整根都在 10:15 之后】的 K 线（标签 10:15 那根覆盖 10:10~10:15，排除）
+    if (barStartHM(ts[i]) < LOD_START) continue;
     // ⛔「正在走的那根」若正好是入池取样点 → 跳过。
     //    否则「入池」与「破位」会在同一瞬间同时成立 → 入池即被剔、下轮又重新入池，
     //    每 10 秒刷一轮流水（2026-09-28 欧通转债 123241：11:06~11:10 刷了几十轮）。
