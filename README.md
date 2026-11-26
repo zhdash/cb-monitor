@@ -115,6 +115,8 @@ python -m http.server 8022
 | `vendor/echarts.min.js` | K 线图表库（本地托管，24h 强缓存） |
 | `cb_list.json` | **存续可转债快照**（代码/名称/正股）。只作 `fetchCbList()` 的兜底：上游清单接口抖动时用它，避免整页空白 |
 | `diag.html` | **直连自检页**：逐项测各数据源与 GBK 解码，每项直接给 HTTP 状态或错误名（部署排查用） |
+| `RULES.md` | **规则说明**：两池的入池/剔除/时间口径/参数总表/边界与排障速查（改判定逻辑时同步改它） |
+| `ver.txt` | 版本号，供页面自检（与 `APP_VER` 不一致 → 自动刷新）|
 | `start.bat` | Windows 启动脚本 |
 
 ## 数据源
