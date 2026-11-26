@@ -1801,16 +1801,16 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.6.1';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.6.2';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
 const TC_KLINE_URL = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=';
 const EM_LIST_URL  = 'https://datacenter-web.eastmoney.com/api/data/v1/get';
 const EM_PREM_URL  = 'https://push2.eastmoney.com/api/qt/ulist.np/get';
-const TC_BATCH_MIN = 8;           // 起步/保底批量（URL ≈ 95 字符，最保守也稳）
+const TC_BATCH_MIN = 8;           // 保底批量（失败拆分的最小粒度）
 const TC_BATCH_MAX = 80;          // 上限批量（与后端 BATCH_SIZE 一致）；连续成功会自己涨回这里
-const TC_MAX_REQ   = 48;          // 每轮行情的请求预算（含兜底与拆分重试），防止失败时自我轰炸
+const TC_MAX_REQ   = 80;          // 每轮行情请求预算（v1.6.2：48 → 80，给拆批重试留余量）
 const BOLL_PERIOD  = 20;          // 标准布林线周期
 const BOLL_MULT    = 2.0;         // 标准布林线倍数
 const KLINE_CACHE_TTL  = 4000;    // 直连模式 K 线客户端缓存（扫描与图表共用，别重复打上游）
@@ -1916,7 +1916,8 @@ function jsonpViaScript(url, cbName) {
 const TC_SPLIT_MIN = 1;        // 一路拆到「单只一请求」为止（单只已被 diag 实测证实可通，是保底尺寸）
 const TC_SPLIT_BUDGET = 12;    // 全局最多记录 12 条失败，避免整域名被拦时递归爆炸
 const TC_FETCH_TIMEOUT = 6000; // 单批请求超时（防「既不通也不报错」把整轮拖死）
-let   _tcMaxOK = TC_BATCH_MIN;   // 当前批量：请求失败就下调并记住；连续成功则翻倍试探（自寻最优）
+let   _tcMaxOK = 40;             // 起步批量（v1.6.2：8 → 40）；8 只/批时 312 只要 39 个请求，
+                                 // 几批失败就会吃光预算 → 固定缺百来只（实测 200/312）
 let   _tcOKStreak = 0;           // 连续成功的轮数（够了就尝试放大批量）
 async function fetchQuotesBatch(symbols, errs) {
   if (_quoteReqBudget <= 0) {                       // 预算耗尽：宁可不拿，也不能把上游/代理打坏
@@ -2202,8 +2203,9 @@ function noteQuoteCompleteness(d) {
   const h = $('hint');
   if (h) {
     h.innerHTML = '<span style="color:#b45309">本轮行情取到 ' + n + ' / ' + base + ' 只（少 ' + miss
-      + ' 只，多为网络抖动），下一轮会自动补齐；若持续如此点「立即刷新」</span>';
+      + ' 只，正在自动补全…）</span>';
   }
+  scheduleBackfill();                 // ⭐ 缺了就立刻定向补，不等下一轮（v1.6.2）
 }
 
 // 市场状态：与后端 market_status() 同口径，改用本地时钟
@@ -2218,6 +2220,102 @@ function localMarketStatus() {
   return '已收盘';
 }
 
+// ---- 行情文本解析（直连与补全共用）----
+function parseQuotePayload(parts, meta) {
+  const rows = [];
+  const re = /v_([a-z]{2}\d{6})="([^"]*)"/g;
+  for (const raw of (parts || [])) {
+    if (!raw) continue;
+    re.lastIndex = 0;                            // ⚠️ 全局正则每次重置，否则会漏匹配
+    let m;
+    while ((m = re.exec(raw))) {
+      const sym = m[1], f = m[2].split('~');
+      if (f.length < 40) continue;
+      const code = sym.slice(2);
+      const num = i => { const v = (f[i] || '').trim(); return (v === '' || v === '-') ? null : (isFinite(parseFloat(v)) ? parseFloat(v) : null); };
+      const amount = num(37);
+      if (amount == null) continue;              // 无成交额的行不要（与后端一致）
+      const mi = (meta && meta.get(code)) || {};
+      rows.push({
+        code: code,
+        name: f[1] || mi.name || '',
+        stock: mi.stock || '',
+        price: num(3), change: num(31), change_pct: num(32),
+        amount_wan: amount, volume: num(6), high: num(33), low: num(34),
+      });
+    }
+  }
+  return rows;
+}
+
+// ---- 行情缺失自动补全（v1.6.2）----
+// 手机端首屏批量只有 8 只/批 → 312 只要 39 个请求，每轮预算 48 个；
+// 几批失败触发拆批重试就会把预算吃光 → 固定缺百来只（实测 200/312），只能手动刷几次。
+// 改成「拿到多少先用、缺的定向补」，直到补齐。
+let _bfBusy = false, _bfPending = null, _bfRetry = 0;
+
+function mergeQuoteRows(baseRows, addRows) {
+  const map = new Map();
+  (baseRows || []).forEach(r => { if (r && r.code) map.set(r.code, r); });
+  (addRows || []).forEach(r => { if (r && r.code) map.set(r.code, r); });
+  return Array.from(map.values()).sort((a, b) => (b.amount_wan || 0) - (a.amount_wan || 0));
+}
+
+function missingQuoteCodes() {
+  const list = (typeof _cbListCache !== 'undefined' && _cbListCache && _cbListCache.data) || [];
+  if (!list.length) return [];
+  const have = new Set(allRows.map(r => r.code));
+  return list.map(b => b.code).filter(c => !have.has(c));
+}
+
+function scheduleBackfill(delay) {
+  if (USE_BACKEND || _bfPending || _bfBusy) return;
+  _bfPending = setTimeout(() => { _bfPending = null; backfillQuotes(); }, delay == null ? 400 : delay);
+}
+
+async function backfillQuotes() {
+  if (USE_BACKEND || _bfBusy) return;
+  const list = (typeof _cbListCache !== 'undefined' && _cbListCache && _cbListCache.data) || [];
+  if (!list.length || !allRows.length) return;
+  let missing = missingQuoteCodes();
+  if (!missing.length) { _bfRetry = 0; return; }
+  const meta = new Map(list.map(b => [b.code, b]));
+  const hint = $('hint');
+  _bfBusy = true;
+  try {
+    for (let round = 0; round < 3 && missing.length; round++) {
+      _quoteReqBudget = Math.max(_quoteReqBudget, 60);
+      const chunks = [];
+      for (let i = 0; i < missing.length; i += 12) chunks.push(missing.slice(i, i + 12));
+      const parts = await mapLimit(chunks, 3, async (ch) => {
+        for (let a = 0; a < 3; a++) {
+          try {
+            const raw = await fetchQuotesBatch(ch.map(cbSymbol), []);
+            if (raw) return raw;
+          } catch (e) {}
+          await new Promise(r => setTimeout(r, 200 * (a + 1)));
+        }
+        return '';
+      });
+      const add = parseQuotePayload(parts, meta);
+      if (!add.length) break;
+      render(Object.assign({}, lastPayload, { rows: mergeQuoteRows(allRows, add), total: allRows.length + add.length }));
+      missing = missingQuoteCodes();
+      if (hint && missing.length) hint.innerHTML = '<span style="color:#b45309">行情补全中… 还缺 ' + missing.length + ' 只（第 ' + (round + 1) + ' 轮）</span>';
+    }
+    if (!missing.length) {
+      _bfRetry = 0;
+      if (hint) hint.textContent = '';
+      console.log('[可转债监控] 行情已补全');
+    } else if (hint) {
+      hint.innerHTML = '<span style="color:#b45309">行情仍缺 ' + missing.length + ' 只，已自动重试 3 轮，稍后继续</span>';
+      if (++_bfRetry <= 6) setTimeout(() => { _bfPending = null; backfillQuotes(); }, 12000);
+    }
+  } finally {
+    _bfBusy = false;
+  }
+}
+
 // ---- ① 行情快照 ----
 async function directQuotes() {
   if (_quotesCache.data && Date.now() - _quotesCache.ts < QUOTES_CACHE_TTL) return _quotesCache.data;
@@ -2230,27 +2328,7 @@ async function directQuotes() {
   _quoteReqBudget = TC_MAX_REQ;          // 每轮行情的请求预算（含兜底与拆分），防止失败时自我轰炸
   const batchErrs = [];
   const parts = await mapLimit(batches, 2, b => fetchQuotesBatch(b, batchErrs));
-  const rows = [];
-  const re = /v_([a-z]{2}\d{6})="([^"]*)"/g;
-  for (const raw of parts) {
-    let m;
-    while ((m = re.exec(raw))) {
-      const sym = m[1], f = m[2].split('~');
-      if (f.length < 40) continue;
-      const code = sym.slice(2);
-      const num = i => { const v = (f[i] || '').trim(); return (v === '' || v === '-') ? null : (isFinite(parseFloat(v)) ? parseFloat(v) : null); };
-      const amount = num(37);
-      if (amount == null) continue;                 // 与后端一致：无成交额的行不要
-      const mi = meta.get(code) || {};
-      rows.push({
-        code: code,
-        name: f[1] || mi.name || '',
-        stock: mi.stock || '',
-        price: num(3), change: num(31), change_pct: num(32),
-        amount_wan: amount, volume: num(6), high: num(33), low: num(34),
-      });
-    }
-  }
+  const rows = parseQuotePayload(parts, meta);
   rows.sort((a, b) => (b.amount_wan || 0) - (a.amount_wan || 0));
   const p = x => String(x).padStart(2, '0');
   const now = new Date();
