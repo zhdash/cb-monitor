@@ -1801,7 +1801,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.6.3';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.6.4';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2359,51 +2359,7 @@ async function directQuotes() {
 }
 
 // ---- ② 批量 K 线（m5 / m60）----
-// ---- 新浪 K 线兜底（v1.6.3，静态直连模式；第一层兜底）----
-// 为什么首选新浪：它给的是 JSONP（jsonp_v2.php 里 var x=[...]），不需要 CORS，
-// 限流也比东财宽松得多（东财 push2his 连续几次就断连，实测）。
-function sinaKlineScript(url, varName) {
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    let done = false;
-    const finish = (ok, arg) => {
-      if (done) return;
-      done = true; clearTimeout(tm);
-      try { s.remove(); } catch (e) {}
-      if (ok) resolve(arg); else reject(arg);
-    };
-    const tm = setTimeout(() => finish(false, new Error('新浪K线超时')), 12000);
-    s.onload = () => setTimeout(() => {
-      const v = window[varName];
-      if (v && v.length) finish(true, v); else finish(false, new Error('新浪K线为空'));
-    }, 0);
-    s.onerror = () => finish(false, new Error('新浪K线加载失败'));
-    s.src = url;
-    document.head.appendChild(s);
-  });
-}
-
-async function sinaKlineJsonp(code, period, need) {
-  const scale = (period === 'm60') ? 60 : 5;
-  const varName = '_cbS' + (++_jsonpSeq);
-  const limit = Math.min(1023, Math.max(320, need || 0));     // 新浪硬上限 1023
-  const url = 'https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20' + varName
-    + '=/CN_MarketDataService.getKLineData?symbol=' + cbSymbol(code)
-    + '&scale=' + scale + '&ma=no&datalen=' + limit;
-  const arr = await sinaKlineScript(url, varName);
-  const times = [], klines = [], vols = [], closes = [];
-  for (const r of arr) {
-    const o = +r.open, c = +r.close, h = +r.high, l = +r.low, v = +r.volume;
-    if (!isFinite(o) || !isFinite(c) || !isFinite(h) || !isFinite(l)) continue;
-    times.push(String(r.day).slice(0, 16));                 // "YYYY-MM-DD HH:MM:00" → 截到分钟
-    klines.push([o, c, l, h]); vols.push(isFinite(v) ? v : 0); closes.push(c);
-  }
-  if (!times.length) throw new Error('新浪K线为空');
-  try { delete window[varName]; } catch (e) {}
-  return { times: times, kline: klines, vol: vols, boll: calcBoll(closes, BOLL_PERIOD, BOLL_MULT) };
-}
-
-// ---- 东财 K 线兜底（v1.6.3，静态直连模式；第二层兜底）----
+// ---- 东财 K 线兜底（v1.6.3/v1.6.4，静态直连模式；与本机后端同一套参数）----
 // 腾讯 mkline 两条通道（fetch / <script>）都取不到时，改打东财 push2his，
 // 用 JSONP 绕 CORS。参数与后端 server.py 完全一致：klt=5/60、fqt=0、fields2=f51..f57。
 async function eastKlineJsonp(code, period, need) {
@@ -2450,14 +2406,15 @@ async function directOneKline(code, period, need) {
     if (!built) throw new Error('K线为空');
   } catch (e) { tcErr = e; }
   if (!built) {
-    // ⭐ 腾讯两条通道都失败 → 新浪 → 东财（v1.6.3）。后端模式本来就有东财这层，这里给在线模式补齐。
-    let sinaErr = null, eastErr = null;
-    try { built = await sinaKlineJsonp(code, period, need); } catch (e2) { sinaErr = e2; }
-    if (!built) { try { built = await eastKlineJsonp(code, period, need); } catch (e3) { eastErr = e3; } }
-    if (!built) {
+    // ⭐ 腾讯两条通道都失败 → 东财兜底（与本机后端同一套参数，v1.6.4）
+    //   ⛔⛔ 永远不要用新浪：实测（2026-11-26，三江 123273）它和腾讯的 5 分钟 K 线
+    //       320 根里有 283 根收盘价不一致、最大差 4.23 元；既不是时间错位（错位假设匹配 0%），
+    //       也不是复权（比值在 1.0000 上下随机跳，不是单调台阶）—— 是另一套聚合口径。
+    //       拿它当兜底会直接污染入池 / 涨破 / 破位判定。
+    try { built = await eastKlineJsonp(code, period, need); }
+    catch (e2) {
       throw new Error('K线获取失败：腾讯(' + ((tcErr && tcErr.message) || tcErr)
-        + ')；新浪(' + ((sinaErr && sinaErr.message) || sinaErr)
-        + ')；东财(' + ((eastErr && eastErr.message) || eastErr) + ')');
+        + ')；东财(' + ((e2 && e2.message) || e2) + ')');
     }
   }
   let out = built;
