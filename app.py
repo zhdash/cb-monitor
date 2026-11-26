@@ -46,6 +46,7 @@ _STATIC_ALIAS = {
     "/app.html":     ("app.html",     "text/html; charset=utf-8"),
     "/cb_list.json": ("cb_list.json", "application/json; charset=utf-8"),
     "/diag.html":    ("diag.html",    "text/html; charset=utf-8"),
+    "/ver.txt":      ("ver.txt",      "text/plain; charset=utf-8"),
 }
 
 

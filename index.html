@@ -1801,7 +1801,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.6.5';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.6.6';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -3484,6 +3484,34 @@ function applySchedule() {
   }
 })();
 
+// ==================== 版本自检（v1.6.6）====================
+// 为什么需要：改完部署后，页面若一直不刷新就会停在旧版 —— 表现为「本地和在线结论不一样」。
+//   2026-11-26 实例：在线页面停在 v1.6.0（两次读数），13:35:16 就把还没定稿的 K 线判了，
+//   把满坤误剔（"中途已出现上涨"），而本地用新版判出的是正确的 2 根连跌。
+// 做法：读同目录的 ver.txt，与 APP_VER 不一致就提示并自动刷新。
+let _verTimer = null, _verReload = false;
+async function checkVersion() {
+  if (_verReload) return;
+  try {
+    const r = await fetch('ver.txt?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = (await r.text()).trim();
+    if (!v || v === APP_VER) return;
+    _verReload = true;
+    const el = document.getElementById('verTip');
+    const nv = document.getElementById('verNew');
+    if (nv) nv.textContent = v;
+    if (el) el.style.display = 'block';
+    console.log('[可转债监控] 发现新版本 ' + v + '（当前 ' + APP_VER + '），3 秒后自动刷新');
+    setTimeout(() => { try { location.reload(); } catch (e) {} }, 3000);
+  } catch (e) { /* 静态托管没有 ver.txt 时静默 */ }
+}
+function startVersionCheck() {
+  setTimeout(checkVersion, 4000);
+  if (_verTimer) clearInterval(_verTimer);
+  _verTimer = setInterval(checkVersion, 5 * 60 * 1000);
+}
+
 // ==================== 启动 ====================
 (function () {
   const tag = APP_VER + ' · ' + (USE_BACKEND ? '本机后端模式' : '静态直连模式');
@@ -3560,6 +3588,7 @@ try { startAutoWatch(); } catch (e) { console.error('startAutoWatch failed', e);
 try { startMidScan(); } catch (e) { console.error('startMidScan failed', e); }
 try { startScan60(); } catch (e) { console.error('startScan60 failed', e); }
 try { startBarTicks(); } catch (e) { console.error('startBarTicks failed', e); }
+try { startVersionCheck(); } catch (e) { console.error('startVersionCheck failed', e); }
 load();
 try { if (!marketClosed() && watchSet.size) midBandScan(); } catch (e) { console.error('midBandScan failed', e); }
 // 恢复上次选中的转债
@@ -3572,5 +3601,6 @@ try {
   }
 } catch (e) { console.error('restore kline failed', e); }
 </script>
+<div id="verTip" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#b45309;color:#fff;font-size:13px;line-height:1.6;padding:10px 14px;text-align:center;box-shadow:0 -2px 8px rgba(0,0,0,.15)">发现新版本 <b id="verNew"></b>，3 秒后自动刷新…<span style="opacity:.8">（刷新后规则与数据源才是最新的）</span></div>
 </body>
 </html>
