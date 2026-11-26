@@ -1801,7 +1801,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.5.3';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.6.0';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2284,7 +2284,9 @@ async function directQuotes() {
 async function directOneKline(code, period, need) {
   const key = code + '|' + period + '|' + need;
   const hit = _klineCache.get(key);
-  if (hit && Date.now() - hit.ts < KLINE_CACHE_TTL) return hit.data;
+  // ⭐ 定点扫描（收盘 +5/+10/+15s）必须读【实时】数据，否则两次读数会命中同一份缓存，
+  //    变成「假的一致」（v1.6.0）
+  if (_freshDepth <= 0 && hit && Date.now() - hit.ts < KLINE_CACHE_TTL) return hit.data;
   const sym = cbSymbol(code);
   const url = TC_KLINE_URL + sym + ',' + period + ',,320';
   let raw;
@@ -2361,9 +2363,12 @@ async function apiQuotes() {
 }
 async function apiKlinesM5(codes, tail) {
   if (!USE_BACKEND) return apiKlines(codes, tail, 'm5');
-  const res = await fetch('/api/klines?codes=' + codes.join(',') + '&tail=' + tail, { cache: 'no-store' });
+  const fresh = _freshDepth > 0 ? '&fresh=1' : '';
+  const res = await fetch('/api/klines?codes=' + codes.join(',') + '&tail=' + tail + fresh, { cache: 'no-store' });
   if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
+  const map = await res.json();
+  Object.keys(map).forEach(k => { if (map[k] && !map[k].code) map[k].code = k; });
+  return map;
 }
 async function apiKlinesM60(codes, tail) {
   if (!USE_BACKEND) return apiKlines(codes, tail, 'm60');
@@ -2461,7 +2466,7 @@ function resumeRefresh() {
   // 顺序：先 await load() 把行情拉新，再扫 —— 否则会拿切走前的旧 top20 去扫。
   Promise.resolve(load()).then(() => {
     if (canAutoRefresh()) {                       // 非交易时段不扫（与定时器口径一致）
-      try { autoWatchScan(); } catch (e) { console.error('resume autoWatchScan failed', e); }
+      runAutoScan();
     }
     try { if (watchSet.size) midBandScan(); } catch (e) { console.error('resume midBandScan failed', e); }
     try { if (watch60.size) scan60Watch(); } catch (e) { console.error('resume scan60Watch failed', e); }
@@ -2528,7 +2533,15 @@ const LOD_EPS   = 0.0005;        // 触及容差 0.05%（吸收浮点误差与�
 //    8 秒内读到的值可能不是最终值（2026-11-23 奥普转债 118075 实例：
 //    10:25:08 读到 158.550、判「涨破」剔除；定稿后收盘实为 158.396，其实是跌的）。
 //    冷却期内不参与【涨破/破位】这类剔除判定，下一轮（≥20 秒后）用定稿数据再判。
-const BAR_SETTLE_MS = 20000;
+// ⭐ 冷静期改为「两次读数一致」的确认制（v1.6.0）：
+//   固定 20 秒太慢（收盘后要等 20~30 秒才出结果），但直接缩短又会在上游还没定稿时误判
+//   （奥普 118075 收盘后 8 秒、爱科 118069 收盘后约 10 秒，读到的都还不是最终值）。
+//   ⇒ 收盘后 +5s 读一次做基准，+10s 再读一次：两次一致就认为已定稿、立刻判定；
+//     不一致就继续等（+15s 再确认），到 20 秒无条件信任（等价旧行为，兜底）。
+const BAR_SETTLE_MS = 5000;      // 最短冷静期：收盘不足 5 秒不采信
+const BAR_TRUST_MS  = 20000;     // 超过 20 秒无条件信任（保底）
+const _barSeen = new Map();      // "code|barTs" -> "close|low|high|vol"
+let _freshDepth = 0;             // >0 时绕过 K 线缓存（定点扫描用，保证两次读数是独立的）
 const LOD_TAIL  = 64;            // 需覆盖当天全部 5 分钟 K 线（A股一天 48 根），取 64 留余量
 
 // 「自动监控」自 v1.3.4 起**常开**：勾选框已移除（误碰会关掉自动扫描，体验差）。
@@ -2561,11 +2574,28 @@ function lastClosedIdx(d) {
 //   「入池 / 涨破 / 破位 / 中轨」一律以它为准，否则同一根 K 线会在 10 秒内先「跌」后「涨」，
 //   导致刚入池就被兜底剔除（2026-11-23 爱科 14:25:09 入池 → 14:25:19 剔除）。
 function settledEnd(d) {
-  const ts = d && d.times;
-  if (!ts || !ts.length) return -1;
-  let end = lastClosedIdx(d);
-  if (end >= 1 && Date.now() - barEndMs(ts[end]) < BAR_SETTLE_MS) end--;
-  return end;
+  if (d && d.__sEnd !== undefined) return d.__sEnd;     // 同一次扫描内多次调用结果必须一致
+  const ts = d && d.times, k = d && d.kline;
+  if (!ts || !ts.length) { if (d) d.__sEnd = -1; return -1; }
+  const end = lastClosedIdx(d);
+  if (end < 1) { if (d) d.__sEnd = end; return end; }
+
+  const age = Date.now() - barEndMs(ts[end]);
+  let out;
+  if (age >= BAR_TRUST_MS) out = end;                    // 20 秒后无条件信任
+  else if (age < BAR_SETTLE_MS) out = end - 1;           // 太新，本轮不采信
+  else {
+    const key = (d.code || '?') + '|' + ts[end];
+    const sig = k[end][1] + '|' + k[end][2] + '|' + k[end][3] + '|' +
+                ((d.vol && d.vol[end] != null) ? d.vol[end] : '');
+    out = (_barSeen.get(key) === sig) ? end : end - 1;   // 两次读数一致 → 定稿
+    if (_barSeen.get(key) !== sig) {
+      _barSeen.set(key, sig);
+      if (_barSeen.size > 4000) _barSeen.clear();
+    }
+  }
+  if (d) d.__sEnd = out;
+  return out;
 }
 
 // K 线时间戳（"YYYY-MM-DD HH:MM[:SS]"）的两个常用切片
@@ -2594,6 +2624,7 @@ function dayLowBreak(d, entry) {
   const n = k.length;
   const last = n - 1;                          // ⭐ 最新一根（可能还在走）
   const end = lastClosedIdx(d);                // 已收盘的最后一根 —— 只用来算基准
+  const sEnd = settledEnd(d);                  // 已定稿的最后一根（两次读数一致的确认制）
   if (end < 1) return null;                    // 已收盘样本不足 → 不判定
   const lastDay = dayOf(ts[last]);             // 「当天」= 最新 K 线所属日
   // ⭐ 按【开始时刻】判：10:15 之前（含覆盖 10:10~10:15 的那根）一律不判破位
@@ -2638,7 +2669,7 @@ function dayLowBreak(d, entry) {
     //    它收盘后（i !== last）照常参与判定，不损失时效。
     if (i > end && i === ei) continue;         // 仅当它「还在走」时才跳过
     // ⭐ 刚收盘不足冷却期 → 数据可能还在修正，本轮不判（下一轮再判）
-    if (i === end && Date.now() - barEndMs(ts[i]) < BAR_SETTLE_MS) continue;
+    if (i === end && end > sEnd) continue;     // 最后一根还没定稿（两次读数不一致）→ 本轮不判
     // 只认「下跌」的那根（收 < 前一根收）；上涨/走平那根即使最低价创新低，也不算破位。
     // 注意：只要求【最低价】跌破新低，**不要求收盘价也在新低**（老大 2026-09-24 明确）。
     // 严格比较原始收盘价，不加任何容差。涨跌幅同用标准口径 —— 当天第一根照算（2026-09-28 老大定）。
@@ -3200,9 +3231,45 @@ function startScan60() {
 }
 
 let autoTimer = null;
+// ⭐ 单飞包装（v1.6.0）：定时扫描、收盘定点扫描、回前台补扫可能同时到达，
+//   不加锁会重复入池/重复写流水。
+let _autoScanBusy = false;
+function runAutoScan() {
+  if (_autoScanBusy) return Promise.resolve();
+  _autoScanBusy = true;
+  return Promise.resolve()
+    .then(() => autoWatchScan())
+    .catch(e => console.error('autoWatchScan failed', e))
+    .finally(() => { _autoScanBusy = false; });
+}
 function startAutoWatch() {
   if (autoTimer) clearInterval(autoTimer);
-  autoTimer = scheduleLoop(autoWatchScan, AUTO_WIN);
+  autoTimer = scheduleLoop(runAutoScan, AUTO_WIN);
+}
+
+// ⭐ 收盘定点扫描（v1.6.0）：每根 5 分钟 K 线收盘后 +5s / +10s / +15s 各扫一次。
+//   目的：让「两次读数一致」的确认制能在 10 秒内完成，而不是干等 20 秒。
+//   +5s 读一次记基准，+10s 再读一次 → 一致即定稿、当场判定；不一致则 +15s 再确认。
+const BAR_TICKS = [5000, 10000, 15000];
+function startBarTicks() {
+  const runTick = (tryNo) => {
+    if (marketClosed()) return;
+    if (typeof midScanBusy !== 'undefined' && midScanBusy && tryNo < 3) {
+      setTimeout(() => runTick(tryNo + 1), 700);      // 常规扫描正在跑 → 稍后重试，别丢这一拍
+      return;
+    }
+    _freshDepth++;                                    // 绕过缓存，保证两次读数是独立的
+    const p1 = runAutoScan();
+    const p2 = watchSet.size ? Promise.resolve().then(() => midBandScan()).catch(() => {}) : Promise.resolve();
+    Promise.all([p1, p2]).finally(() => { _freshDepth--; });
+  };
+  const loop = () => {
+    const now = Date.now();
+    const next = Math.ceil((now + 200) / 300000) * 300000;   // 下一个 5 分钟整点
+    BAR_TICKS.forEach(off => setTimeout(() => runTick(0), Math.max(0, next + off - now)));
+    setTimeout(loop, Math.max(1000, next + BAR_TICKS[BAR_TICKS.length - 1] + 4000 - now));
+  };
+  loop();
 }
 let timer = null;
 function applySchedule() {
@@ -3348,6 +3415,7 @@ try { applySchedule(); } catch (e) { console.error('applySchedule failed', e); }
 try { startAutoWatch(); } catch (e) { console.error('startAutoWatch failed', e); }
 try { startMidScan(); } catch (e) { console.error('startMidScan failed', e); }
 try { startScan60(); } catch (e) { console.error('startScan60 failed', e); }
+try { startBarTicks(); } catch (e) { console.error('startBarTicks failed', e); }
 load();
 try { if (!marketClosed() && watchSet.size) midBandScan(); } catch (e) { console.error('midBandScan failed', e); }
 // 恢复上次选中的转债

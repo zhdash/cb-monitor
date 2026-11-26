@@ -413,5 +413,25 @@ server.Handler._serve_vendor = _serve_vendor
 server.KLINE_TTL_TRADING = 10
 
 
+# ==================== ④b 定点扫描绕过后端 K 线缓存（v1.6.0）====================
+# 收盘 +5/+10/+15s 的两次读数必须是【独立】的：若都命中同一份 10 秒缓存，
+# 「两次读数一致」就变成假的一致，会把还没定稿的数据当成定稿。
+_orig_api_klines = server.Handler._api_klines
+
+
+def _api_klines_v160(self):
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+    if (q.get("fresh") or [""])[0] == "1":
+        raw = (q.get("codes") or [""])[0]
+        codes = [c for c in re.split(r"[,\s]+", raw) if server._CODE_RE.match(c)]
+        with server._lock:
+            for c in codes:
+                server._kline_cache.pop(c, None)
+    _orig_api_klines(self)
+
+
+server.Handler._api_klines = _api_klines_v160
+
+
 if __name__ == "__main__":
     server.main()
