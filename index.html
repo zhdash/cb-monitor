@@ -1801,7 +1801,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.6.8';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.6.9';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -3012,7 +3012,14 @@ async function midBandScan() {
         const rr = hasRisenSince(d, watchEntry[code]);
         if (rr) {
           watchSet.delete(code); delete watchEntry[code]; riseDrop++;
-          autoDropWait.set(code, String(d.times[d.times.length - 1]));   // 等一根「上涨」才让回来
+          // ⭐⭐ 涨破【不设解禁锁】（v1.6.9）
+          //   老大 2026-09-28 的原话是「必须等其有一个上涨 5 分钟 K 线，后面再判断后面 5 分钟 K 线的下跌」——
+          //   涨破本身就是因为出现了一根上涨 K 线，这一波下跌已经走完，锁的目的（防止还在跌时放回来）已达成。
+          //   旧代码把锁设成 d.times[last]（正在走那根，如 14:15）→ 要等到 14:15 之后再涨才解禁；
+          //   而新一波下跌里全是跌 ⇒ 整波都被锁住。
+          //   2026-11-26 风语 113643：14:00 入池 → 14:10 涨破剔除（锁=14:15）→ 14:20/14:25 连跌 2 根达标
+          //   却始终进不来；而在线版（页面刷新过、没有锁）14:25:16 正常入池。
+          //   ⛔ 解禁锁只属于「破位 / 连跌变短」这种【不是因为上涨而剔除】的情形。
           feedPush(code, 'out', '涨破｜' + hmOf(rr.at) + ' 收 ' + rr.c.toFixed(3)
                                + ' > 前收 ' + rr.p.toFixed(3));
         } else {

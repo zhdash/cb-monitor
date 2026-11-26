@@ -726,6 +726,22 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    # ⭐ 云端托管兼容（v1.6.9）：平台可能直接以 `python server.py` 启动，
+    #   不会经过 app.py 的那层补丁 —— 所以把判断放在 main() 里，两个入口都覆盖。
+    #   规则：① 有 PORT 环境变量 → 用它 + 绑 0.0.0.0（平台健康检查要求）
+    #        ② 没有 PORT 且不是 Windows（=云端 Linux）→ 默认 3000 + 0.0.0.0
+    #        ③ 本机 Windows → 保持 127.0.0.1:8011，行为不变
+    global HOST, PORT
+    _env_port = os.environ.get("PORT")
+    if _env_port:
+        try:
+            PORT = int(_env_port)
+        except ValueError:
+            pass
+        HOST = "0.0.0.0"
+    elif os.name != "nt":
+        PORT = 3000
+        HOST = "0.0.0.0"
     port = PORT
     if len(sys.argv) > 1:
         try:
