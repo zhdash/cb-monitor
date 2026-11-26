@@ -1801,7 +1801,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.6.6';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.6.7';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2957,6 +2957,20 @@ function paintMidTag(el, rec) {
            + ' \u00b7 ' + rec.t;
 }
 
+// ⭐ 「连跌变短」兜底判定（v1.6.7）
+// 老大 2026-11-26 要求：**入池后中途出现上涨不用剔，只有 5 分钟收盘才判**。
+// 原实现只看 strongDownCount < 2 就剔，但最新那根若还在被上游改写，
+// settledEnd 会退回上一根 → 计数少一根 → 刚入池 3 秒就被误剔
+// （2026-11-26 13:40:12 奥普/盛德/福新入池，13:40:15 全被「只剩 1 根」剔掉）。
+// ⇒ 必须等「最新已收盘那根已定稿」，才允许用计数做剔除。
+function countShrunkSettled(d, entry) {
+  if (!d || !d.times || !d.times.length) return false;
+  if (settledEnd(d) !== lastClosedIdx(d)) return false;              // 还有未定稿的根 → 不判
+  const lastDay = dayOf(d.times[d.times.length - 1]);
+  if (!entry || dayOf(entry) !== lastDay) return false;             // 跨日不判（沿用原逻辑）
+  return strongDownCount(d) < AUTO_RUN;
+}
+
 async function midBandScan() {
   if (midScanBusy) return;
   // 「成交额前 20」剪枝：掉出前 20 一律剔除（数据未就绪时不剪枝）
@@ -2999,8 +3013,7 @@ async function midBandScan() {
             autoDropWait.set(code, String(d.times[d.times.length - 1]));   // 等一根「上涨」才让回来
             feedPush(code, 'out', '破位｜' + hmOf(lb.at) + ' 低 ' + lb.low.toFixed(3)
                                  + ' ≤ 入池基准 ' + lb.base.toFixed(3));
-          } else if (dayOf(watchEntry[code] || '') === dayOf(d.times[d.times.length - 1])
-                     && strongDownCount(d) < AUTO_RUN) {
+          } else if (countShrunkSettled(d, watchEntry[code])) {
             // 剔除③「状态自洽兜底」（v1.4.5）：
             //   入池要求连跌段里 ≥2 根跌超 0.25%；若现在不到 2 根，说明中途必然出现过【上涨】
             //   （走平不中断连跌段，只有上涨才会让它归零/减少）→ 本该被涨破剔除。
@@ -3010,7 +3023,7 @@ async function midBandScan() {
             //   ⚠️ 只在【入池当天】生效：跨日的池子交给原有逻辑，避免早盘误清。
             watchSet.delete(code); delete watchEntry[code]; riseDrop++;
             autoDropWait.set(code, String(d.times[d.times.length - 1]));
-            feedPush(code, 'out', '连跌只剩 ' + strongDownCount(d) + ' 根（中途已出现上涨）');
+            feedPush(code, 'out', '连跌只剩 ' + strongDownCount(d) + ' 根（已收盘确认中途出现过上涨）');
           }
         }
       }
