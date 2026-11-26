@@ -1801,7 +1801,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.6.7';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.6.8';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2957,6 +2957,16 @@ function paintMidTag(el, rec) {
            + ' \u00b7 ' + rec.t;
 }
 
+// ⭐ 入池也要等「最新收盘那根定稿」（v1.6.8）
+// 为什么：13:55 那根还没定稿时，strongDownCount 会退到 13:50 去数（数出 4 根 → 入池），
+// 等 13:55 定稿发现是上涨 → 立刻又被涨破剔掉。2026-11-26 13:55 满坤/惠城/肇民
+// 全是这么「入池 4 秒后又剔除」的。入池与剔除必须看同一份定稿数据。
+function inPoolEligible(d) {
+  if (!d || !d.times || !d.times.length) return false;
+  if (settledEnd(d) !== lastClosedIdx(d)) return false;   // 最新已收盘那根还没定稿 → 本轮不入池
+  return checkDownTrend(d);
+}
+
 // ⭐ 「连跌变短」兜底判定（v1.6.7）
 // 老大 2026-11-26 要求：**入池后中途出现上涨不用剔，只有 5 分钟收盘才判**。
 // 原实现只看 strongDownCount < 2 就剔，但最新那根若还在被上游改写，
@@ -3162,7 +3172,7 @@ async function autoWatchScan() {
         if (hasRisenSince(d, autoDropWait.get(code))) autoDropWait.delete(code);   // 已经涨过 → 解禁
         else continue;                                                             // 还在跌 → 本轮不入池
       }
-      if (checkDownTrend(d) && !watchSet.has(code) && !redeemSet.has(code)) {
+      if (inPoolEligible(d) && !watchSet.has(code) && !redeemSet.has(code)) {
         watchSet.add(code);
         // ⭐ 入池取样点必须记【已收盘的最后一根】—— 也就是让 strongDownCount 达标的那根。
         //    记「数据末根」会拿到【正在走的那根】，那根 K 线一旦创了日内新低就会被【双重豁免】：

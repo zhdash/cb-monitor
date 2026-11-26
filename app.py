@@ -442,4 +442,14 @@ server.Handler._api_klines = _api_klines_v160
 
 
 if __name__ == "__main__":
+    # ⭐ 云端托管时平台会注入 PORT，并要求绑定 0.0.0.0（v1.6.8）
+    # 本机运行时没有 PORT，仍是 127.0.0.1:8011，行为不变。
+    _env_port = os.environ.get("PORT")
+    if _env_port:
+        try:
+            server.PORT = int(_env_port)
+            server.HOST = "0.0.0.0"
+            print("[cloud] 使用平台端口 %d，绑定 0.0.0.0" % server.PORT, flush=True)
+        except ValueError:
+            pass
     server.main()
