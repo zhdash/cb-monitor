@@ -1801,7 +1801,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.6.0';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.6.1';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2536,11 +2536,14 @@ const LOD_EPS   = 0.0005;        // 触及容差 0.05%（吸收浮点误差与�
 // ⭐ 冷静期改为「两次读数一致」的确认制（v1.6.0）：
 //   固定 20 秒太慢（收盘后要等 20~30 秒才出结果），但直接缩短又会在上游还没定稿时误判
 //   （奥普 118075 收盘后 8 秒、爱科 118069 收盘后约 10 秒，读到的都还不是最终值）。
-//   ⇒ 收盘后 +5s 读一次做基准，+10s 再读一次：两次一致就认为已定稿、立刻判定；
-//     不一致就继续等（+15s 再确认），到 20 秒无条件信任（等价旧行为，兜底）。
-const BAR_SETTLE_MS = 5000;      // 最短冷静期：收盘不足 5 秒不采信
+//   ⇒ 收盘 +1s 起开始读：**连续 3 次读数（close|low|high|vol）完全一致** 就认为上游已定稿，
+//     立刻判定（正常在 +4s 凑齐）；中途只要变过一次就重新计数（自动退到 +8s / +15s）；
+//     到 20 秒无条件信任（等价旧行为，兜底）。
+//   ⭐ 为什么不「一收盘就判」：那一刻上游可能还没把这根写完整，读到的会是半成品。
+const BAR_SETTLE_MS = 1000;      // 最短冷静期：收盘 1 秒后就开始读（v1.6.1）
 const BAR_TRUST_MS  = 20000;     // 超过 20 秒无条件信任（保底）
-const _barSeen = new Map();      // "code|barTs" -> "close|low|high|vol"
+const BAR_CONFIRM_N = 3;         // 连续 N 次读数完全一致 ⇒ 认为上游已定稿（正常 4 秒内凑齐）
+const _barSeen = new Map();      // "code|barTs" -> {sig, n}
 let _freshDepth = 0;             // >0 时绕过 K 线缓存（定点扫描用，保证两次读数是独立的）
 const LOD_TAIL  = 64;            // 需覆盖当天全部 5 分钟 K 线（A股一天 48 根），取 64 留余量
 
@@ -2588,10 +2591,14 @@ function settledEnd(d) {
     const key = (d.code || '?') + '|' + ts[end];
     const sig = k[end][1] + '|' + k[end][2] + '|' + k[end][3] + '|' +
                 ((d.vol && d.vol[end] != null) ? d.vol[end] : '');
-    out = (_barSeen.get(key) === sig) ? end : end - 1;   // 两次读数一致 → 定稿
-    if (_barSeen.get(key) !== sig) {
-      _barSeen.set(key, sig);
+    const prev = _barSeen.get(key);
+    if (prev && prev.sig === sig) {
+      prev.n++;
+      out = (prev.n >= BAR_CONFIRM_N) ? end : end - 1;   // 连续 N 次一致 → 定稿
+    } else {
+      _barSeen.set(key, { sig: sig, n: 1 });             // 变了 → 重新计数
       if (_barSeen.size > 4000) _barSeen.clear();
+      out = end - 1;
     }
   }
   if (d) d.__sEnd = out;
@@ -3250,7 +3257,7 @@ function startAutoWatch() {
 // ⭐ 收盘定点扫描（v1.6.0）：每根 5 分钟 K 线收盘后 +5s / +10s / +15s 各扫一次。
 //   目的：让「两次读数一致」的确认制能在 10 秒内完成，而不是干等 20 秒。
 //   +5s 读一次记基准，+10s 再读一次 → 一致即定稿、当场判定；不一致则 +15s 再确认。
-const BAR_TICKS = [5000, 10000, 15000];
+const BAR_TICKS = [1000, 2000, 4000, 8000, 15000];   // 越早凑齐 3 次一致越早出结果
 function startBarTicks() {
   const runTick = (tryNo) => {
     if (marketClosed()) return;
