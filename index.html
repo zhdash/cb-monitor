@@ -1801,7 +1801,7 @@ function renderFeed() {
 //   腾讯 qt.gtimg.cn（行情）、ifzq.gtimg.cn（5 / 60 分钟 K 线）、
 //   东财 datacenter-web.eastmoney.com（可转债清单、强赎名单）。
 // ⚠️ 溢价率走东财 push2，跨域未确认 → 拿不到就把该列留空（--），不影响其它功能。
-const APP_VER = 'v1.6.4';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
+const APP_VER = 'v1.6.5';   // 页面版本号（页脚 + 控制台都会显示）—— 排查时先确认"跑的是哪一版"
 const USE_BACKEND = /^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port === '8011';
 
 const TC_QUOTE_URL = 'https://qt.gtimg.cn/q=';
@@ -2702,6 +2702,12 @@ function settledEnd(d) {
   const end = lastClosedIdx(d);
   if (end < 1) { if (d) d.__sEnd = end; return end; }
 
+  // ⭐ 11:30 那根在 13:01 之前不采信（午休期间会被上游改写，见 lunchFinalMs 注释）
+  if (String(ts[end]).slice(11, 16) === '11:30' && Date.now() < lunchFinalMs(ts[end])) {
+    d.__sEnd = end - 1;
+    return end - 1;
+  }
+
   const age = Date.now() - barEndMs(ts[end]);
   let out;
   if (age >= BAR_TRUST_MS) out = end;                    // 20 秒后无条件信任
@@ -2731,6 +2737,18 @@ function hmOf(ts)  { return String(ts).slice(11, 16); }  // "HH:MM"
 //   腾讯的标签是【结束时刻】：标签 10:15 的那根覆盖 10:10~10:15。
 //   所以「10:15 之前不动手」必须拿开始时刻比，否则 10:11 的破位会被算在 10:15 那根上、
 //   直接穿过 10:15 的门槛（2026-11-25 爱科 118069：10:11:12 就被 10:15 那根剔了）。
+// ⭐ 午休边界：11:30 那根在 13:00 开盘后仍会被上游改写（v1.6.5）。
+//   实测 2026-11-26：13:00:09 读到 奥士 185.257 / 微导 192.412 / 满坤 157.753（全判「涨破」），
+//   13:00:26 才定稿成 183.000 / 191.509 / 157.282（全是跌）——同一根 K 线两个值，
+//   于是出现「13:00:15 剔除涨破 → 13:00:26 入池连跌 2 根」这种自相矛盾的流水。
+//   ⇒ 11:30 这根一律等到 13:01 之后才采信。
+function lunchFinalMs(ts) {
+  const s = String(ts);
+  const y = +s.slice(0, 4), mo = +s.slice(5, 7), d = +s.slice(8, 10);
+  if (!y || !mo || !d) return 0;
+  return new Date(y, mo - 1, d, 13, 1, 0).getTime();
+}
+
 function barStartHM(ts) {
   const t = barEndMs(ts);
   if (!isFinite(t)) return '';
